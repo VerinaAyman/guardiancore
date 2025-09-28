@@ -1,8 +1,13 @@
 FROM python:3.11-slim
 
 WORKDIR /app
+
+# Copy requirements.txt from backend/
 COPY requirements.txt .
+
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy the app source
 COPY src ./src
 COPY .env ./.env
 

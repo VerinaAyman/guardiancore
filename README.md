@@ -2,12 +2,16 @@
 
 A regulated, GDPR-compliant browser extension and backend system for safer browsing with parental/guardian features.
 
-## Week 1 Deliverables ✅
+## Week 2 Deliverables ✅
 
 - ✅ FastAPI backend with health routes and PostgreSQL connection
-- ✅ Manifest V3 Chrome extension with API call functionality  
+- ✅ Manifest V3 Chrome extension with audit probe functionality
+- ✅ Privacy-preserving audit data collection and submission
+- ✅ Bearer token authentication for API security
+- ✅ Audit statistics and analytics endpoints
+- ✅ Enhanced database schema with audit_events table
 - ✅ Docker Compose configuration for PostgreSQL and backend services
-- ✅ DPIA draft v1 with data flows and compliance considerations
+- ✅ Updated DPIA v2 with audit data processing details
 - ✅ Architecture and data-flow diagrams
 - ✅ Git repository with proper .gitignore
 
@@ -36,6 +40,11 @@ A regulated, GDPR-compliant browser extension and backend system for safer brows
    curl http://localhost:8000/          # Backend alive
    curl http://localhost:8000/health   # Health check
    curl http://localhost:8000/health/db # Database health
+   ```
+
+4. **Test the audit system:**
+   ```bash
+   ./scripts/test-audit-system.sh
    ```
 
 ## Architecture
@@ -86,7 +95,29 @@ uvicorn src.app.main:app --reload
 
 ## Security & Privacy
 
-- No personal data collection in Week 1
-- CORS configured for localhost development
-- Database isolation via Docker networks
-- Audit logging planned for future releases
+- **Privacy-first design**: Only origin hashes (SHA-256) stored, no full URLs or PII
+- **Data minimization**: Only security-relevant metadata (CSP, CORS, tracker counts)
+- **Authentication**: Bearer token-based API security
+- **Data retention**: 30-day retention policy for audit records
+- **CORS configured** for localhost development
+- **Database isolation** via Docker networks
+- **Comprehensive audit logging** with privacy-preserving design
+
+## API Endpoints
+
+### Health & Status
+- `GET /` - Backend status
+- `GET /health` - Health check
+- `GET /health/db` - Database health
+- `GET /health/version` - Version info
+
+### Audit System
+- `POST /audit/submit` - Submit audit record (requires Bearer token)
+- `GET /audit/stats` - Get audit statistics (requires Bearer token)
+- `GET /audit/recent` - Get recent audit records (requires Bearer token)
+
+### Authentication
+All audit endpoints require a valid Bearer token in the Authorization header:
+```
+Authorization: Bearer dev-token-123
+```

@@ -1,9 +1,20 @@
 from fastapi import FastAPI
 from .routers import health
+from .routers.audit import router as audit_router
+from .db import init_db
 from .config import settings
 from fastapi.middleware.cors import CORSMiddleware
+import logging
 
-app = FastAPI(title=settings.APP_NAME, version=settings.APP_VERSION)
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title=settings.APP_NAME, 
+    version=settings.APP_VERSION,
+    description="GuardianCore Backend API for privacy-focused audit monitoring"
+)
 
 # Allow extension to call localhost API
 app.add_middleware(
@@ -14,8 +25,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Include routers
 app.include_router(health.router)
+app.include_router(audit_router)
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup."""
+    try:
+        await init_db()
+        logger.info("GuardianCore backend started successfully")
+    except Exception as e:
+        logger.error(f"Failed to start GuardianCore backend: {e}")
+        raise
 
 @app.get("/")
 async def root():
-    return {"message": "GuardianCore backend alive"}
+    return {
+        "message": "GuardianCore backend alive",
+        "version": settings.APP_VERSION,
+        "environment": settings.ENV
+    }

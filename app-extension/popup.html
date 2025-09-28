@@ -1,10 +1,119 @@
 <!doctype html>
 <html>
-  <head><meta charset="utf-8"><title>GuardianCore</title></head>
-  <body style="min-width:280px;font-family:sans-serif">
-    <h3>GuardianCore</h3>
-    <button id="ping">Ping Backend</button>
-    <pre id="out"></pre>
+  <head>
+    <meta charset="utf-8">
+    <title>GuardianCore Settings</title>
+    <style>
+      body {
+        min-width: 320px;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        margin: 0;
+        padding: 16px;
+        background: #f8fafc;
+      }
+      .container {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      }
+      h3 {
+        margin: 0 0 16px 0;
+        color: #1e293b;
+        font-size: 18px;
+        font-weight: 600;
+      }
+      .form-group {
+        margin-bottom: 16px;
+      }
+      label {
+        display: block;
+        margin-bottom: 4px;
+        font-weight: 500;
+        color: #374151;
+        font-size: 14px;
+      }
+      input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 14px;
+        box-sizing: border-box;
+      }
+      input:focus {
+        outline: none;
+        border-color: #3b82f6;
+        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+      }
+      button {
+        background: #3b82f6;
+        color: white;
+        border: none;
+        padding: 10px 16px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        width: 100%;
+        transition: background-color 0.2s;
+      }
+      button:hover {
+        background: #2563eb;
+      }
+      button:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+      }
+      #status {
+        margin-top: 12px;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 14px;
+        text-align: center;
+      }
+      .status-success {
+        background: #dcfce7;
+        color: #166534;
+        border: 1px solid #bbf7d0;
+      }
+      .status-error {
+        background: #fef2f2;
+        color: #dc2626;
+        border: 1px solid #fecaca;
+      }
+      .status-info {
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #bfdbfe;
+      }
+      .help-text {
+        font-size: 12px;
+        color: #6b7280;
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h3>GuardianCore Settings</h3>
+      
+      <div class="form-group">
+        <label for="backend">Backend URL</label>
+        <input id="backend" type="url" placeholder="https://api.example.com" />
+        <div class="help-text">HTTPS endpoint for audit data submission</div>
+      </div>
+      
+      <div class="form-group">
+        <label for="token">API Token</label>
+        <input id="token" type="password" placeholder="dev-token-123" />
+        <div class="help-text">Authentication token for backend access</div>
+      </div>
+      
+      <button id="save">Save Settings</button>
+      <div id="status"></div>
+    </div>
+    
     <script src="popup.js"></script>
   </body>
 </html>
