@@ -28,6 +28,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Initialize
   console.log("[Popup] Starting initialization...");
+  // We still load settings to display current configuration but make inputs read-only
   loadSettings().catch(e => console.error("[Popup] loadSettings error:", e));
   loadCurrentTab().catch(e => console.error("[Popup] loadCurrentTab error:", e));
   loadActiveRules().catch(e => console.error("[Popup] loadActiveRules error:", e));
@@ -36,11 +37,21 @@ document.addEventListener("DOMContentLoaded", () => {
   // Save settings button
   const saveBtn = document.getElementById("save-settings");
   if (saveBtn) {
-    saveBtn.addEventListener("click", saveSettings);
-    console.log("[Popup] Save settings button attached");
-  } else {
-    console.error("[Popup] save-settings button not found");
+    saveBtn.textContent = "Open Parent Settings";
+    saveBtn.addEventListener("click", openParentSettings);
+    console.log("[Popup] Parent settings redirect button attached");
   }
+
+  // Make backend URL and token fields read-only and clickable to open parent settings
+  const backendInput = document.getElementById("backend-url");
+  const tokenInput = document.getElementById("api-token");
+  [backendInput, tokenInput].forEach(el => {
+    if (el) {
+      el.setAttribute("readonly", "readonly");
+      el.classList.add("readonly-field");
+      el.addEventListener("click", openParentSettings);
+    }
+  });
   
   // Refresh stats button
   const refreshBtn = document.getElementById("refresh-stats");
@@ -71,29 +82,14 @@ async function loadSettings() {
   if (gc_api_token) document.getElementById("api-token").value = gc_api_token;
 }
 
-async function saveSettings() {
-  const backendUrl = document.getElementById("backend-url").value.trim();
-  const apiToken = document.getElementById("api-token").value.trim();
-  
-  if (!backendUrl || !apiToken) {
-    alert("Both fields are required");
-    return;
+function openParentSettings() {
+  // Open options page (parent PIN lock will gate changes)
+  console.log("[Popup] Redirecting to options page for parent auth");
+  if (chrome.runtime.openOptionsPage) {
+    chrome.runtime.openOptionsPage();
+  } else {
+    window.open(chrome.runtime.getURL('options.html'));
   }
-  
-  try {
-    new URL(backendUrl);
-  } catch (e) {
-    alert("Invalid URL format");
-    return;
-  }
-  
-  await chrome.storage.local.set({
-    gc_backend_url: backendUrl,
-    gc_api_token: apiToken
-  });
-  
-  alert("Settings saved successfully!");
-  chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
 }
 
 async function loadCurrentTab() {
