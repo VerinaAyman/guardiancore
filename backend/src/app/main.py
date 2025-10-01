@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from .routers import health
 from .routers.audit import router as audit_router
+from .routers.rules import router as rules_router
 from .db import init_db
 from .config import settings
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +29,7 @@ app.add_middleware(
 # Include routers
 app.include_router(health.router)
 app.include_router(audit_router)
+app.include_router(rules_router)
 
 @app.on_event("startup")
 async def startup_event():

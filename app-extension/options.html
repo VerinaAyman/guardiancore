@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GuardianCore - Parent Settings</title>
+    <style>
+      * { box-sizing: border-box; margin: 0; padding: 0; }
+      
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        padding: 40px 20px;
+      }
+      
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        overflow: hidden;
+      }
+      
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 30px;
+        text-align: center;
+      }
+      
+      .header h1 {
+        font-size: 28px;
+        margin-bottom: 8px;
+      }
+      
+      .header .subtitle {
+        opacity: 0.9;
+        font-size: 14px;
+      }
+      
+      .content {
+        padding: 30px;
+      }
+      
+      .section {
+        margin-bottom: 30px;
+        padding-bottom: 30px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      
+      .section:last-child {
+        border-bottom: none;
+      }
+      
+      .section-title {
+        font-size: 20px;
+        font-weight: 600;
+        color: #1e293b;
+        margin-bottom: 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      
+      .form-group {
+        margin-bottom: 16px;
+      }
+      
+      label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: 500;
+        color: #374151;
+        font-size: 14px;
+      }
+      
+      input, select, textarea {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        font-size: 14px;
+        font-family: inherit;
+      }
+      
+      input:focus, select:focus, textarea:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+      }
+      
+      textarea {
+        min-height: 80px;
+        resize: vertical;
+      }
+      
+      button {
+        background: #667eea;
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+      
+      button:hover {
+        background: #5568d3;
+        transform: translateY(-1px);
+      }
+      
+      button:disabled {
+        background: #9ca3af;
+        cursor: not-allowed;
+        transform: none;
+      }
+      
+      button.danger {
+        background: #ef4444;
+      }
+      
+      button.danger:hover {
+        background: #dc2626;
+      }
+      
+      button.secondary {
+        background: #64748b;
+      }
+      
+      button.secondary:hover {
+        background: #475569;
+      }
+      
+      .btn-group {
+        display: flex;
+        gap: 10px;
+      }
+      
+      .status {
+        padding: 12px;
+        border-radius: 6px;
+        margin-top: 12px;
+        font-size: 14px;
+      }
+      
+      .status-success {
+        background: #dcfce7;
+        color: #166534;
+        border: 1px solid #bbf7d0;
+      }
+      
+      .status-error {
+        background: #fef2f2;
+        color: #dc2626;
+        border: 1px solid #fecaca;
+      }
+      
+      .status-info {
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #bfdbfe;
+      }
+      
+      .rule-card {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+      }
+      
+      .rule-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        margin-bottom: 12px;
+      }
+      
+      .rule-info h4 {
+        font-size: 16px;
+        color: #1e293b;
+        margin-bottom: 4px;
+      }
+      
+      .rule-info .rule-meta {
+        font-size: 13px;
+        color: #64748b;
+      }
+      
+      .rule-actions {
+        display: flex;
+        gap: 8px;
+      }
+      
+      .rule-actions button {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+      
+      .badge {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      
+      .badge-blocklist {
+        background: #fef2f2;
+        color: #dc2626;
+      }
+      
+      .badge-allowlist {
+        background: #dcfce7;
+        color: #166534;
+      }
+      
+      .badge-time_window {
+        background: #fef3c7;
+        color: #854d0e;
+      }
+      
+      .badge-enabled {
+        background: #dcfce7;
+        color: #166534;
+      }
+      
+      .badge-disabled {
+        background: #f1f5f9;
+        color: #64748b;
+      }
+      
+      .empty-state {
+        text-align: center;
+        padding: 40px;
+        color: #94a3b8;
+      }
+      
+      .lock-screen {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.9);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+      }
+      
+      .lock-box {
+        background: white;
+        padding: 40px;
+        border-radius: 12px;
+        text-align: center;
+        max-width: 400px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      }
+      
+      .lock-icon {
+        font-size: 48px;
+        margin-bottom: 20px;
+      }
+      
+      .lock-box h2 {
+        font-size: 24px;
+        margin-bottom: 12px;
+        color: #1e293b;
+      }
+      
+      .lock-box p {
+        color: #64748b;
+        margin-bottom: 24px;
+      }
+      
+      .hidden {
+        display: none !important;
+      }
+      
+      .info-box {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 13px;
+        color: #1e40af;
+        margin-bottom: 16px;
+      }
+      
+      .time-inputs {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      
+      .days-selector {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      
+      .day-btn {
+        padding: 8px 12px;
+        border: 2px solid #e2e8f0;
+        background: white;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 13px;
+        font-weight: 500;
+        color: #64748b;
+        transition: all 0.2s;
+      }
+      
+      .day-btn.selected {
+        background: #667eea;
+        color: white;
+        border-color: #667eea;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- PIN Lock Screen -->
+    <div id="lock-screen" class="lock-screen">
+      <div class="lock-box">
+        <div class="lock-icon">🔒</div>
+        <h2>Parent Access Required</h2>
+        <p>Enter your PIN to manage parental controls</p>
+        <div class="form-group">
+          <input type="password" id="pin-input" placeholder="Enter 4-digit PIN" maxlength="4" pattern="[0-9]{4}">
+        </div>
+        <button id="unlock-btn" style="width: 100%;">Unlock</button>
+        <div id="pin-status" class="status hidden"></div>
+        <p style="margin-top: 20px; font-size: 12px;">
+          Default PIN: <strong>1234</strong><br>
+          Change it in Backend Settings below
+        </p>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div id="main-content" class="container hidden">
+      <div class="header">
+        <h1>🛡️ GuardianCore Parent Settings</h1>
+        <div class="subtitle">Manage parental controls and rules</div>
+      </div>
+
+      <div class="content">
+        <!-- Backend Settings -->
+        <div class="section">
+          <h3 class="section-title">⚙️ Backend Configuration</h3>
+          <div class="form-group">
+            <label>Backend URL</label>
+            <input type="url" id="backend-url" placeholder="http://localhost:8000">
+          </div>
+          <div class="form-group">
+            <label>API Token</label>
+            <input type="password" id="api-token" placeholder="dev-token-123">
+          </div>
+          <div class="form-group">
+            <label>Parent PIN (4 digits)</label>
+            <input type="password" id="parent-pin" placeholder="1234" maxlength="4" pattern="[0-9]{4}">
+            <small style="color: #64748b; font-size: 12px; display: block; margin-top: 4px;">
+              Required to access this settings page
+            </small>
+          </div>
+          <button id="save-backend-btn">Save Backend Settings</button>
+          <div id="backend-status" class="status hidden"></div>
+        </div>
+
+        <!-- Rules Management -->
+        <div class="section">
+          <h3 class="section-title">📋 Manage Rules</h3>
+          
+          <div class="info-box">
+            💡 <strong>Tip:</strong> Allowlist rules override blocklist. Time windows apply to all sites except allowlist.
+          </div>
+
+          <!-- Add Rule Form -->
+          <div style="background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+            <h4 style="margin-bottom: 16px; color: #1e293b;">Add New Rule</h4>
+            
+            <div class="form-group">
+              <label>Rule Type</label>
+              <select id="rule-type">
+                <option value="blocklist">Blocklist - Block specific sites</option>
+                <option value="allowlist">Allowlist - Always allow these sites</option>
+                <option value="time_window">Time Window - Restrict by time</option>
+              </select>
+            </div>
+
+            <div id="domain-input-group" class="form-group">
+              <label>Domain Pattern</label>
+              <input type="text" id="rule-pattern" placeholder="e.g., tiktok.com, facebook.com">
+              <small style="color: #64748b; font-size: 12px; display: block; margin-top: 4px;">
+                Enter domain without http:// or www.
+              </small>
+            </div>
+
+            <div id="time-input-group" class="form-group hidden">
+              <label>Time Restriction</label>
+              <div class="time-inputs">
+                <div>
+                  <label>Start Hour (0-23)</label>
+                  <input type="number" id="start-hour" min="0" max="23" value="22">
+                </div>
+                <div>
+                  <label>End Hour (0-23)</label>
+                  <input type="number" id="end-hour" min="0" max="23" value="6">
+                </div>
+              </div>
+              <label style="margin-top: 12px;">Active Days</label>
+              <div class="days-selector">
+                <button type="button" class="day-btn selected" data-day="0">Sun</button>
+                <button type="button" class="day-btn selected" data-day="1">Mon</button>
+                <button type="button" class="day-btn selected" data-day="2">Tue</button>
+                <button type="button" class="day-btn selected" data-day="3">Wed</button>
+                <button type="button" class="day-btn selected" data-day="4">Thu</button>
+                <button type="button" class="day-btn selected" data-day="5">Fri</button>
+                <button type="button" class="day-btn selected" data-day="6">Sat</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Category (optional)</label>
+              <input type="text" id="rule-category" placeholder="e.g., social_media, education, gaming">
+            </div>
+
+            <div class="form-group">
+              <label>Explanation (shown when blocked)</label>
+              <textarea id="rule-explanation" placeholder="Explain why this rule exists..."></textarea>
+            </div>
+
+            <button id="add-rule-btn">Add Rule</button>
+            <div id="add-rule-status" class="status hidden"></div>
+          </div>
+
+          <!-- Rules List -->
+          <h4 style="margin-bottom: 12px; color: #1e293b;">Active Rules</h4>
+          <div id="rules-list">
+            <div class="empty-state">Loading rules...</div>
+          </div>
+          
+          <button id="refresh-rules-btn" class="secondary" style="margin-top: 16px;">Refresh Rules</button>
+        </div>
+      </div>
+    </div>
+
+    <script src="options.js"></script>
+  </body>
+</html>

@@ -1,6 +1,27 @@
 # GuardianCore
 
-A regulated, GDPR-compliant browser extension and backend system for safer browsing with parental/guardian features.
+A regulated, GDPR-compliant browser extension and backend system for safer browsing with parental/guardian features and explainable controls.
+
+## Week 3 Deliverables ✅ (Latest)
+
+**Explainable Controls (RQ-B2) - Proportional parental control with transparency**
+
+- ✅ Rules CRUD API (`/rules`) for allowlist, blocklist, and time_window rules
+- ✅ Client-side rule enforcement with explainable blocking page
+- ✅ Enhanced popup with 3 tabs (Status, Stats, Settings)
+- ✅ **Parent Settings Page** with PIN protection (default: `1234`)
+  - Secure rule management (add/edit/delete/toggle rules)
+  - Backend configuration (URL, token, PIN)
+  - Time window setup with day selector
+  - Real-time rule synchronization
+- ✅ Throttling mechanism (10s window) to prevent duplicate submissions
+- ✅ Retention job for automatic data cleanup (30-day policy)
+- ✅ Expanded tracker list (20+ trackers) with explainable categories
+- ✅ Enhanced stats API with category breakdowns
+- ✅ Comprehensive test suite with 8 test scenarios
+- ✅ Complete documentation and quick start guides
+
+**See:** `docs/PHASE-2.md` for complete documentation
 
 ## Week 2 Deliverables ✅
 
@@ -42,9 +63,25 @@ A regulated, GDPR-compliant browser extension and backend system for safer brows
    curl http://localhost:8000/health/db # Database health
    ```
 
-4. **Test the audit system:**
+4. **Test the system:**
    ```bash
-   ./scripts/test-audit-system.sh
+   ./scripts/test-week3.sh      # Week 3 features
+   ./scripts/complete-test.sh   # Full system test
+   ```
+
+5. **Create sample rules:**
+   ```bash
+   # Block social media
+   curl -X POST http://localhost:8000/rules/ \
+     -H "Authorization: Bearer dev-token-123" \
+     -H "Content-Type: application/json" \
+     -d '{"rule_type":"blocklist","pattern":"tiktok.com","category":"social_media","explanation":"Blocked during study time","enabled":true}'
+   
+   # Set bedtime restrictions
+   curl -X POST http://localhost:8000/rules/ \
+     -H "Authorization: Bearer dev-token-123" \
+     -H "Content-Type: application/json" \
+     -d '{"rule_type":"time_window","pattern":"{\"start_hour\":22,\"end_hour\":6,\"days\":[0,1,2,3,4,5,6]}","category":"bedtime","explanation":"Sleep time!","enabled":true}'
    ```
 
 ## Architecture
@@ -69,9 +106,13 @@ guardiancore/
 │   └── Dockerfile         # Backend container
 ├── app-extension/          # Chrome extension
 │   ├── manifest.json      # MV3 manifest
-│   ├── popup.html         # Extension popup
+│   ├── popup.html         # Extension popup (3 tabs)
 │   ├── popup.js          # Popup logic
-│   └── background.js      # Service worker
+│   ├── options.html       # Parent settings page
+│   ├── options.js         # Settings logic with PIN
+│   ├── blocked.html       # Blocking explanation page
+│   ├── blocked.js         # Block reason display
+│   └── background.js      # Service worker with rule enforcement
 ├── docs/                  # Documentation
 │   ├── DPIA.md           # Data Protection Impact Assessment
 │   └── architecture.md   # Architecture diagrams

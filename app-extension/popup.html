@@ -1,50 +1,115 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>GuardianCore Settings</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GuardianCore</title>
     <style>
       body {
-        min-width: 320px;
+        min-width: 380px;
+        max-width: 380px;
         font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
         margin: 0;
-        padding: 16px;
+        padding: 0;
         background: #f8fafc;
       }
-      .container {
-        background: white;
-        border-radius: 8px;
+      .header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
         padding: 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        text-align: center;
       }
-      h3 {
-        margin: 0 0 16px 0;
-        color: #1e293b;
-        font-size: 18px;
+      .header h2 {
+        margin: 0;
+        font-size: 20px;
         font-weight: 600;
       }
+      .header .subtitle {
+        font-size: 12px;
+        opacity: 0.9;
+        margin-top: 4px;
+      }
+      .tabs {
+        display: flex;
+        background: white;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .tab {
+        flex: 1;
+        padding: 12px;
+        text-align: center;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        font-size: 14px;
+        font-weight: 500;
+        color: #64748b;
+        transition: all 0.2s;
+      }
+      .tab:hover {
+        background: #f8fafc;
+      }
+      .tab.active {
+        color: #667eea;
+        border-bottom-color: #667eea;
+      }
+      .content {
+        padding: 16px;
+      }
+      .tab-content {
+        display: none;
+      }
+      .tab-content.active {
+        display: block;
+      }
+      .section {
+        background: white;
+        border-radius: 8px;
+        padding: 16px;
+        margin-bottom: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      }
+      .section-title {
+        font-size: 14px;
+        font-weight: 600;
+        color: #1e293b;
+        margin: 0 0 12px 0;
+      }
+      .stat-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 0;
+        border-bottom: 1px solid #f1f5f9;
+      }
+      .stat-row:last-child {
+        border-bottom: none;
+      }
+      .stat-label {
+        font-size: 13px;
+        color: #64748b;
+      }
+      .stat-value {
+        font-size: 16px;
+        font-weight: 600;
+        color: #1e293b;
+      }
       .form-group {
-        margin-bottom: 16px;
+        margin-bottom: 12px;
       }
       label {
         display: block;
         margin-bottom: 4px;
         font-weight: 500;
         color: #374151;
-        font-size: 14px;
+        font-size: 13px;
       }
-      input {
+      input, select {
         width: 100%;
         padding: 8px 12px;
         border: 1px solid #d1d5db;
         border-radius: 6px;
-        font-size: 14px;
+        font-size: 13px;
         box-sizing: border-box;
-      }
-      input:focus {
-        outline: none;
-        border-color: #3b82f6;
-        box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
       }
       button {
         background: #3b82f6;
@@ -52,7 +117,7 @@
         border: none;
         padding: 10px 16px;
         border-radius: 6px;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: 500;
         cursor: pointer;
         width: 100%;
@@ -65,55 +130,171 @@
         background: #9ca3af;
         cursor: not-allowed;
       }
-      #status {
-        margin-top: 12px;
-        padding: 8px 12px;
+      button.secondary {
+        background: #64748b;
+      }
+      button.secondary:hover {
+        background: #475569;
+      }
+      .status {
+        margin-top: 8px;
+        padding: 8px;
         border-radius: 6px;
-        font-size: 14px;
+        font-size: 12px;
         text-align: center;
       }
       .status-success {
         background: #dcfce7;
         color: #166534;
-        border: 1px solid #bbf7d0;
       }
       .status-error {
         background: #fef2f2;
         color: #dc2626;
-        border: 1px solid #fecaca;
       }
       .status-info {
         background: #eff6ff;
         color: #1d4ed8;
-        border: 1px solid #bfdbfe;
       }
-      .help-text {
+      .blocked-banner {
+        background: #fef2f2;
+        border: 1px solid #fecaca;
+        border-radius: 6px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+      .blocked-banner .title {
+        font-weight: 600;
+        color: #dc2626;
+        margin-bottom: 4px;
+      }
+      .blocked-banner .reason {
         font-size: 12px;
-        color: #6b7280;
-        margin-top: 4px;
+        color: #991b1b;
+      }
+      .badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      .badge-success {
+        background: #dcfce7;
+        color: #166534;
+      }
+      .badge-warning {
+        background: #fef3c7;
+        color: #854d0e;
+      }
+      .badge-danger {
+        background: #fef2f2;
+        color: #dc2626;
+      }
+      .empty-state {
+        text-align: center;
+        padding: 24px;
+        color: #94a3b8;
+        font-size: 13px;
       }
     </style>
   </head>
   <body>
-    <div class="container">
-      <h3>GuardianCore Settings</h3>
-      
-      <div class="form-group">
-        <label for="backend">Backend URL</label>
-        <input id="backend" type="url" placeholder="https://api.example.com" />
-        <div class="help-text">HTTPS endpoint for audit data submission</div>
-      </div>
-      
-      <div class="form-group">
-        <label for="token">API Token</label>
-        <input id="token" type="password" placeholder="dev-token-123" />
-        <div class="help-text">Authentication token for backend access</div>
-      </div>
-      
-      <button id="save">Save Settings</button>
-      <div id="status"></div>
+    <div class="header">
+      <h2>GuardianCore</h2>
+      <div class="subtitle">Privacy & Parental Controls</div>
     </div>
-    
+
+    <div class="tabs">
+      <div class="tab active" data-tab="status">Status</div>
+      <div class="tab" data-tab="stats">Stats</div>
+      <div class="tab" data-tab="settings">Settings</div>
+    </div>
+
+    <div class="content">
+      <!-- Status Tab -->
+      <div class="tab-content active" id="status-tab">
+        <div id="blocked-banner" style="display: none;" class="blocked-banner">
+          <div class="title">🛡️ Content Blocked</div>
+          <div class="reason" id="blocked-reason"></div>
+        </div>
+
+        <div class="section">
+          <h3 class="section-title">Current Page</h3>
+          <div class="stat-row">
+            <span class="stat-label">Trackers Detected</span>
+            <span class="stat-value" id="current-trackers">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">CSP Protection</span>
+            <span class="badge" id="current-csp">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">CORS Signals</span>
+            <span class="badge" id="current-cors">-</span>
+          </div>
+        </div>
+
+        <div class="section">
+          <h3 class="section-title">Active Rules</h3>
+          <div id="active-rules">
+            <div class="empty-state">Loading rules...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Stats Tab -->
+      <div class="tab-content" id="stats-tab">
+        <div class="section">
+          <h3 class="section-title">Audit Statistics</h3>
+          <div class="stat-row">
+            <span class="stat-label">Total Audits</span>
+            <span class="stat-value" id="stat-total">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Unique Origins</span>
+            <span class="stat-value" id="stat-unique">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Avg Trackers</span>
+            <span class="stat-value" id="stat-trackers">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">CSP Coverage</span>
+            <span class="stat-value" id="stat-csp">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">CORS Coverage</span>
+            <span class="stat-value" id="stat-cors">-</span>
+          </div>
+        </div>
+
+        <button id="refresh-stats">Refresh Statistics</button>
+      </div>
+
+      <!-- Settings Tab -->
+      <div class="tab-content" id="settings-tab">
+        <div class="section">
+          <h3 class="section-title">Backend Configuration</h3>
+          <div class="form-group">
+            <label>Backend URL</label>
+            <input type="text" id="backend-url" placeholder="http://localhost:8000">
+          </div>
+          <div class="form-group">
+            <label>API Token</label>
+            <input type="password" id="api-token" placeholder="dev-token-123">
+          </div>
+          <button id="save-settings">Save Settings</button>
+          <div class="status" id="settings-status" style="display: none;"></div>
+        </div>
+
+        <div class="section">
+          <h3 class="section-title">Actions</h3>
+          <button id="refresh-rules" class="secondary">Refresh Rules</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Ensure we load the correct current popup script -->
     <script src="popup.js"></script>
   </body>
 </html>

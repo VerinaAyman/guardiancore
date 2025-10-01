@@ -41,10 +41,44 @@ def _ensure_dict(obj) -> Dict[str, Any]:
         return {}
 
 @router.post("/submit")
-async def submit_audit(record: AuditRecord, _=Depends(require_bearer)):
-    """Submit an audit record for processing and storage."""
+async def submit_audit(
+    record: AuditRecord, 
+    tab_id: Optional[int] = None,
+    _=Depends(require_bearer)
+):
+    """Submit an audit record with throttling to prevent duplicates."""
     try:
+        from ..db import submit_throttle
+        from sqlalchemy import and_
+        
         async with async_session() as session:
+            # Check throttle (10s window)
+            if tab_id is not None:
+                throttle_check = select(submit_throttle).where(
+                    and_(
+                        submit_throttle.c.origin_hash == record.origin_hash,
+                        submit_throttle.c.tab_id == tab_id,
+                        submit_throttle.c.last_submit >= datetime.utcnow() - timedelta(seconds=10)
+                    )
+                )
+                result = await session.execute(throttle_check)
+                if result.fetchone():
+                    logger.debug(f"Throttled submission for {record.origin_hash[:8]} tab {tab_id}")
+                    return {"ok": True, "message": "Throttled", "throttled": True}
+                
+                # Update or insert throttle record
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+                upsert_stmt = pg_insert(submit_throttle).values(
+                    origin_hash=record.origin_hash,
+                    tab_id=tab_id,
+                    last_submit=datetime.utcnow()
+                ).on_conflict_do_update(
+                    index_elements=['origin_hash', 'tab_id'],
+                    set_={'last_submit': datetime.utcnow()}
+                )
+                await session.execute(upsert_stmt)
+            
+            # Insert audit record
             stmt = insert(audit_events).values(
                 user_id=None,
                 origin_hash=record.origin_hash,
@@ -55,6 +89,7 @@ async def submit_audit(record: AuditRecord, _=Depends(require_bearer)):
             )
             await session.execute(stmt)
             await session.commit()
+        
         logger.info("audit submit ok for %s", record.origin_hash[:8])
         return {"ok": True, "message": "Audit record submitted successfully"}
     except Exception as e:

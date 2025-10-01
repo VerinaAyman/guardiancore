@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Extension Test</title>
+</head>
+<body>
+  <h1>GuardianCore Extension Test</h1>
+  
+  <h2>1. Test Storage</h2>
+  <button id="testStorage">Test Chrome Storage</button>
+  <pre id="storageResult"></pre>
+  
+  <h2>2. Test API</h2>
+  <button id="testAPI">Test Rules API</button>
+  <pre id="apiResult"></pre>
+  
+  <h2>3. Test Tab Switching</h2>
+  <div style="display: flex; gap: 10px; margin: 20px 0;">
+    <div class="tab active" data-tab="status">Status</div>
+    <div class="tab" data-tab="stats">Stats</div>
+    <div class="tab" data-tab="settings">Settings</div>
+  </div>
+  
+  <div class="tab-content active" id="status-tab">
+    <h3>Status Tab Content</h3>
+  </div>
+  
+  <div class="tab-content" id="stats-tab" style="display: none;">
+    <h3>Stats Tab Content</h3>
+  </div>
+  
+  <div class="tab-content" id="settings-tab" style="display: none;">
+    <h3>Settings Tab Content</h3>
+  </div>
+  
+  <h2>Console Output:</h2>
+  <pre id="console" style="background: #f0f0f0; padding: 10px; max-height: 300px; overflow: auto;"></pre>
+
+  <style>
+    body { font-family: Arial, sans-serif; padding: 20px; }
+    button { padding: 10px 20px; cursor: pointer; }
+    pre { background: #f5f5f5; padding: 10px; border-radius: 5px; }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      background: #f5f5f5;
+    }
+    .tab.active {
+      background: #4CAF50;
+      color: white;
+      border-color: #4CAF50;
+    }
+    .tab-content {
+      padding: 20px;
+      border: 1px solid #ddd;
+      margin-top: 10px;
+    }
+    .tab-content:not(.active) {
+      display: none;
+    }
+  </style>
+
+  <script>
+    const consoleEl = document.getElementById('console');
+    const originalLog = console.log;
+    const originalError = console.error;
+    
+    function logToPage(...args) {
+      consoleEl.textContent += args.join(' ') + '\n';
+      originalLog(...args);
+    }
+    
+    function errorToPage(...args) {
+      consoleEl.textContent += 'ERROR: ' + args.join(' ') + '\n';
+      originalError(...args);
+    }
+    
+    console.log = logToPage;
+    console.error = errorToPage;
+    
+    // Test storage
+    document.getElementById('testStorage').addEventListener('click', async () => {
+      try {
+        const result = await chrome.storage.local.get(['gc_backend_url', 'gc_api_token']);
+        document.getElementById('storageResult').textContent = JSON.stringify(result, null, 2);
+        console.log('Storage test:', result);
+      } catch (e) {
+        document.getElementById('storageResult').textContent = 'Error: ' + e.message;
+        console.error('Storage error:', e);
+      }
+    });
+    
+    // Test API
+    document.getElementById('testAPI').addEventListener('click', async () => {
+      try {
+        const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(['gc_backend_url', 'gc_api_token']);
+        
+        if (!gc_backend_url) {
+          document.getElementById('apiResult').textContent = 'Backend URL not configured';
+          return;
+        }
+        
+        const url = `${gc_backend_url.replace(/\/+$/, '')}/rules/?enabled_only=true`;
+        console.log('Fetching from:', url);
+        
+        const response = await fetch(url, {
+          headers: { 'Authorization': `Bearer ${gc_api_token}` }
+        });
+        
+        console.log('Response status:', response.status);
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const rules = await response.json();
+        document.getElementById('apiResult').textContent = JSON.stringify(rules, null, 2);
+        console.log('Rules loaded:', rules.length, 'rules');
+      } catch (e) {
+        document.getElementById('apiResult').textContent = 'Error: ' + e.message;
+        console.error('API error:', e);
+      }
+    });
+    
+    // Test tab switching
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        console.log('Tab clicked:', tab.dataset.tab);
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
+        console.log('Tab switched to:', tab.dataset.tab);
+      });
+    });
+    
+    console.log('Test page loaded');
+  </script>
+</body>
+</html>
