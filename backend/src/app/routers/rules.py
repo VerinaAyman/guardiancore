@@ -33,6 +33,23 @@ class RuleResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+class RulesExport(BaseModel):
+    exported_at: datetime
+    count: int
+    rules: List[RuleResponse]
+
+class ImportRuleItem(BaseModel):
+    rule_type: str
+    pattern: str
+    category: Optional[str] = None
+    explanation: Optional[str] = None
+    enabled: Optional[bool] = True
+
+class ImportResponse(BaseModel):
+    imported_count: int
+    skipped: int
+    details: List[str] = []
+
 def require_bearer(authorization: Optional[str] = Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
@@ -40,6 +57,91 @@ def require_bearer(authorization: Optional[str] = Header(default=None)):
     if token not in settings.gc_api_tokens:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
     return token
+
+@router.get("/all/export", response_model=RulesExport)
+async def export_rules(_=Depends(require_bearer)):
+    """Export ALL rules (enabled and disabled). Placed before /{rule_id} to avoid 422 collisions."""
+    try:
+        async with async_session() as session:
+            q = select(rules).order_by(rules.c.created_at.asc())
+            result = await session.execute(q)
+            rows = result.fetchall()
+            data = [
+                RuleResponse(
+                    id=r.id,
+                    rule_type=r.rule_type,
+                    pattern=r.pattern,
+                    category=r.category,
+                    explanation=r.explanation,
+                    enabled=r.enabled,
+                    created_at=r.created_at,
+                    updated_at=r.updated_at,
+                ) for r in rows
+            ]
+            return RulesExport(
+                exported_at=datetime.utcnow(),
+                count=len(data),
+                rules=data
+            )
+    except Exception:
+        logger.exception("Failed to export rules")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to export rules")
+
+@router.post("/all/import", response_model=ImportResponse)
+async def import_rules(payload: dict, _=Depends(require_bearer)):
+    """Import rules JSON previously exported. Accepts either {rules:[...]} or direct list."""
+    try:
+        # Normalize input
+        raw_list = []
+        if isinstance(payload, list):
+            raw_list = payload
+        elif isinstance(payload, dict):
+            # Support two shapes: {"rules": [...]} or {"data": [...]} or { arbitrary }
+            if isinstance(payload.get("rules"), list):
+                raw_list = payload.get("rules")
+            elif isinstance(payload.get("data"), list):
+                raw_list = payload.get("data")
+            else:
+                # Maybe the dict itself is a single rule
+                maybe_single = {k: payload.get(k) for k in ("rule_type", "pattern") if k in payload}
+                if len(maybe_single) == 2:
+                    raw_list = [payload]
+        if not raw_list:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No rules found in payload")
+
+        imported = 0
+        skipped = 0
+        details: List[str] = []
+        async with async_session() as session:
+            for idx, item in enumerate(raw_list):
+                try:
+                    data = ImportRuleItem(**item)
+                except Exception as e:
+                    skipped += 1
+                    details.append(f"item {idx} invalid: {e}")
+                    continue
+                try:
+                    stmt = insert(rules).values(
+                        rule_type=data.rule_type,
+                        pattern=data.pattern,
+                        category=data.category,
+                        explanation=data.explanation,
+                        enabled=True if data.enabled is None else data.enabled,
+                    )
+                    await session.execute(stmt)
+                    imported += 1
+                except Exception as e:  # pragma: no cover - broad catch for robustness
+                    skipped += 1
+                    details.append(f"item {idx} failed: {e}")
+            await session.commit()
+        return ImportResponse(imported_count=imported, skipped=skipped, details=details)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to import rules")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail="Failed to import rules")
 
 @router.post("/", response_model=RuleResponse, status_code=status.HTTP_201_CREATED)
 async def create_rule(rule: RuleCreate, _=Depends(require_bearer)):

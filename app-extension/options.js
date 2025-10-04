@@ -239,9 +239,6 @@ function setupButtonHandlers() {
   // Change PIN
   document.getElementById("change-pin-btn")?.addEventListener("click", changePIN);
   
-  // Download recovery codes
-  document.getElementById("download-codes-btn")?.addEventListener("click", downloadRecoveryCodes);
-  
   // Regenerate recovery codes
   document.getElementById("regenerate-codes-btn")?.addEventListener("click", regenerateRecoveryCodes);
   
@@ -513,28 +510,45 @@ async function loadRecoveryStatus() {
   
   const usedCount = activeBatch.codes.filter(c => c.used).length;
   const unusedCount = activeBatch.codes.length - usedCount;
-  
+
+  // Build table of codes (masked except last 4). Plaintext not stored after generation.
+  const rows = activeBatch.codes.map((c, idx) => {
+    const masked = `****-****-${c.hash.slice(-4)}`; // show last 4 of hash as identifier
+    const status = c.used ? 'Used' : 'Unused';
+    const statusColor = c.used ? 'var(--gc-warn)' : 'var(--gc-success)';
+    const usedAt = c.used_at ? new Date(c.used_at).toLocaleString() : '';
+    return `<tr>
+      <td style="padding:6px 8px;font-family:monospace;font-size:12px;">${idx+1}</td>
+      <td style="padding:6px 8px;font-family:monospace;font-size:12px;">${masked}</td>
+      <td style="padding:6px 8px;color:${statusColor};font-size:12px;">${status}</td>
+      <td style="padding:6px 8px;font-size:12px;color:var(--gc-text-dim);">${usedAt}</td>
+    </tr>`;
+  }).join("");
+
   statusDiv.innerHTML = `
     <div class="panel">
-      <p><strong>Active Batch:</strong> ${activeBatch.id.substring(0, 8)}...</p>
-      <p><strong>Created:</strong> ${new Date(activeBatch.created_at).toLocaleString()}</p>
-      <p><strong>Unused Codes:</strong> ${unusedCount} of ${activeBatch.codes.length}</p>
-      ${usedCount > 0 ? `<p style="color:var(--gc-warn)"><strong>Used Codes:</strong> ${usedCount}</p>` : ''}
+      <p style="margin-bottom:8px;"><strong>Batch:</strong> ${activeBatch.id.substring(0, 8)}… <strong>Created:</strong> ${new Date(activeBatch.created_at).toLocaleString()}</p>
+      <p style="margin-bottom:12px;">
+        <strong>Usage:</strong> ${unusedCount} unused / ${usedCount} used (total ${activeBatch.codes.length})
+      </p>
+      <div style="overflow-x:auto;">
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead>
+            <tr style="text-align:left;background:#0f1a27;">
+              <th style="padding:6px 8px;font-weight:600;">#</th>
+              <th style="padding:6px 8px;font-weight:600;">Identifier</th>
+              <th style="padding:6px 8px;font-weight:600;">Status</th>
+              <th style="padding:6px 8px;font-weight:600;">Used At</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-top:10px;font-size:11px;color:var(--gc-text-dim);">Original plaintext codes are only visible at generation time. Masked identifiers let you audit usage without exposing secrets.</p>
     </div>
   `;
-}
-
-async function downloadRecoveryCodes() {
-  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
-  const activeBatch = recovery_batches.find(b => b.active);
-  
-  if (!activeBatch) {
-    alert("No active recovery codes batch");
-    return;
-  }
-  
-  // Get codes in plaintext (they're already hashed in storage, so we can't show originals)
-  alert("⚠️ Recovery codes are only shown once during generation.\n\nTo get new codes, use 'Regenerate Codes' (requires PIN).");
 }
 
 async function regenerateRecoveryCodes() {
@@ -604,7 +618,7 @@ async function exportRules() {
   }
   
   try {
-    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/all/export`, {
+  const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/all/export`, {
       headers: {
         "Authorization": `Bearer ${gc_api_token}`
       }

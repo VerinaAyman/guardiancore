@@ -330,8 +330,8 @@ async function loadStats() {
     if (totalEl) totalEl.textContent = stats.total_audits || 0;
     if (uniqueEl) uniqueEl.textContent = stats.unique_origins || 0;
     if (trackersEl) trackersEl.textContent = (stats.avg_trackers || 0).toFixed(2);
-    if (cspEl) cspEl.textContent = `${stats.csp_percentage || 0}%`;
-    if (corsEl) corsEl.textContent = `${stats.cors_percentage || 0}%`;
+  if (cspEl) cspEl.textContent = `${Math.round((stats.csp_coverage || 0)*100)}%`;
+  if (corsEl) corsEl.textContent = `${Math.round((stats.cors_coverage || 0)*100)}%`;
     
     console.log("[loadStats] Stats displayed successfully");
   } catch (e) {
