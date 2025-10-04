@@ -13,11 +13,24 @@ export async function generateSalt() {
 /**
  * Derive key from PIN using PBKDF2-HMAC-SHA-256
  * @param {string} pin - User's PIN
- * @param {string} saltBase64 - Base64-encoded salt
+ * @param {string} saltBase64 - Base64-encoded salt (optional, will generate if not provided)
  * @param {number} iterations - PBKDF2 iterations (default: 310000)
- * @returns {Promise<string>} Base64-encoded hash
+ * @returns {Promise<string|object>} Base64-encoded hash or full PIN object if no salt provided
  */
 export async function hashPin(pin, saltBase64, iterations = 310000) {
+  // If no salt provided, generate full PIN object
+  if (!saltBase64) {
+    const salt = await generateSalt();
+    const hash = await hashPin(pin, salt, iterations);
+    return {
+      algo: "PBKDF2-SHA256",
+      iter: iterations,
+      salt: salt,
+      hash: hash,
+      created_at: new Date().toISOString()
+    };
+  }
+  
   const enc = new TextEncoder();
   const pinBuffer = enc.encode(pin);
   const saltBuffer = base64ToArrayBuffer(saltBase64);
@@ -183,7 +196,8 @@ export async function createRecoveryBatch() {
       iter: 310000,
       hash: hash,
       used: false,
-      used_at: null
+      used_at: null,
+      plaintext: code  // Store temporarily for initial display
     });
   }
   
@@ -204,8 +218,8 @@ export async function createRecoveryBatch() {
   
   await chrome.storage.local.set({ recovery_batches });
   
-  // Return plaintext codes (only time they're visible)
-  return { batch_id: batchId, codes: codes };
+  // Return batch with plaintext codes
+  return batch;
 }
 
 /**

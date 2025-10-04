@@ -131,12 +131,15 @@ function showPINCreation() {
     await chrome.storage.local.set({ pin: hashedPin });
     
     // Generate recovery codes
-    const batch = await crypto.createRecoveryBatch(10);
-    await chrome.storage.local.set({ recovery_batches: [batch] });
+    const batch = await crypto.createRecoveryBatch();
     
     // Show codes to user (ONLY TIME)
     const codes = batch.codes.map(c => c.plaintext).join("\n");
     alert(`⚠️ SAVE THESE RECOVERY CODES NOW!\n\nThey will only be shown once:\n\n${codes}\n\nStore them securely offline.`);
+    
+    // Remove plaintext from storage immediately
+    batch.codes.forEach(c => delete c.plaintext);
+    await chrome.storage.local.set({ recovery_batches: [batch] });
     
     showMainContent();
   };
@@ -607,21 +610,19 @@ async function regenerateRecoveryCodes() {
   
   if (!confirm("Are you sure? All existing recovery codes will stop working.")) return;
   
-  // Deactivate old batches
-  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
-  recovery_batches.forEach(b => b.active = false);
-  
-  // Generate new batch
-  const newBatch = await crypto.createRecoveryBatch(10);
-  recovery_batches.push(newBatch);
-  
-  await chrome.storage.local.set({ recovery_batches });
+  // Generate new batch (this marks old batches inactive internally)
+  const newBatch = await crypto.createRecoveryBatch();
   
   // Show codes (only time)
   const codes = newBatch.codes.map(c => c.plaintext).join("\n");
+  
+  // Remove plaintext from storage immediately after extraction
+  newBatch.codes.forEach(c => delete c.plaintext);
+  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
+  await chrome.storage.local.set({ recovery_batches });
   const codesText = `GuardianCore Recovery Codes
 Generated: ${new Date().toISOString()}
-Batch ID: ${newBatch.id}
+Batch ID: ${newBatch.batch_id}
 
 SAVE THESE CODES SECURELY!
 Each code can only be used once.
@@ -634,7 +635,7 @@ Store this file offline in a secure location.
   
   // Download as file
   const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
-  const filename = `guardian_recovery_codes_${date}_${newBatch.id.substring(0, 8)}.txt`;
+  const filename = `guardian_recovery_codes_${date}_${newBatch.batch_id.substring(0, 8)}.txt`;
   
   const blob = new Blob([codesText], { type: 'text/plain' });
   const url = URL.createObjectURL(blob);

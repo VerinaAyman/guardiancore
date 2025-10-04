@@ -1,6 +1,6 @@
 // GuardianCore Audit Probe - Background Service Worker with Rule Enforcement
 // Week 4: Real-time updates, gamification cues, risk scoring
-console.log("GuardianCore Audit Probe v0.4.0 loaded");
+console.log("GuardianCore Audit Probe v0.4.3 loaded");
 
 // --- Dev / Test Mode Enhancements (Week4 Gamification Testability) ---
 // Fast mode makes 1 minute count as 1 hour for safe streak progression.
@@ -14,6 +14,10 @@ async function loadFastMode() {
     // ignore
   }
 }
+
+// Initialize XP immediately on load
+loadFastMode();
+loadXpState();
 
 // Expanded tracker list with categories
 const TRACKERS = {
