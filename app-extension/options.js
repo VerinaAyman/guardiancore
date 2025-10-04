@@ -1,22 +1,31 @@
-// GuardianCore Options Page - Parent Settings with PIN Protection
+// GuardianCore Options Page - Parent Settings with Hardened PIN & Recovery Codes
+// Week 4: PBKDF2 PIN storage, 10 recovery codes, factory reset
 
-console.log("[Options] Script starting...");
+// Import crypto utilities
+import * as crypto from './crypto.js';
+
+console.log("[Options] Script starting v0.4.4...");
+console.log("[Options] Crypto module loaded:", crypto);
 
 let isUnlocked = false;
 let selectedDays = [0, 1, 2, 3, 4, 5, 6]; // All days by default
 
-// PIN verification
-async function checkPIN() {
-  const { parent_pin = "1234" } = await chrome.storage.local.get("parent_pin");
-  console.log("[checkPIN] PIN retrieved");
-  return parent_pin;
+// PIN verification using PBKDF2
+async function checkStoredPIN() {
+  const { pin } = await chrome.storage.local.get("pin");
+  return pin || null;
 }
 
 async function verifyPIN(inputPIN) {
-  const correctPIN = await checkPIN();
-  const isValid = inputPIN === correctPIN;
-  console.log("[verifyPIN] Verification result:", isValid);
-  return isValid;
+  const storedPin = await checkStoredPIN();
+  
+  if (!storedPin) {
+    // No PIN set yet - first time setup
+    return { firstTime: true };
+  }
+  
+  const isValid = await crypto.verifyPin(inputPIN, storedPin);
+  return { valid: isValid, firstTime: false };
 }
 
 // Show/hide main content
@@ -24,8 +33,13 @@ function showMainContent() {
   document.getElementById("lock-screen").classList.add("hidden");
   document.getElementById("main-content").classList.remove("hidden");
   isUnlocked = true;
+  
+  // Setup button handlers AFTER unlocking
+  setupButtonHandlers();
+  
   loadSettings();
   loadRules();
+  loadRecoveryStatus();
 }
 
 function showStatus(elementId, message, type) {
@@ -36,28 +50,231 @@ function showStatus(elementId, message, type) {
   el.classList.remove("hidden");
   
   if (type === "success") {
-    setTimeout(() => el.classList.add("hidden"), 3000);
+    setTimeout(() => el.classList.add("hidden"), 5000);
   }
 }
 
-// Load backend settings
-async function loadSettings() {
-  const { gc_backend_url, gc_api_token, parent_pin } = await chrome.storage.local.get([
-    "gc_backend_url",
-    "gc_api_token",
-    "parent_pin"
-  ]);
+// Initialize on load
+document.addEventListener("DOMContentLoaded", async () => {
+  console.log("[Options] DOM loaded");
   
-  const backendUrlEl = document.getElementById("backend-url");
-  const apiTokenEl = document.getElementById("api-token");
-  const parentPinEl = document.getElementById("parent-pin");
+  // Tab navigation
+  setupTabs();
   
-  if (gc_backend_url && backendUrlEl) backendUrlEl.value = gc_backend_url;
-  if (gc_api_token && apiTokenEl) apiTokenEl.value = gc_api_token;
-  if (parent_pin && parentPinEl) parentPinEl.value = parent_pin;
+  // Check if PIN exists
+  const storedPin = await checkStoredPIN();
+  
+  if (!storedPin) {
+    // First time - show PIN creation
+    showPINCreation();
+  } else {
+    // Show PIN entry
+    showPINEntry();
+  }
+});
+
+function setupTabs() {
+  const tabs = document.querySelectorAll(".tab-btn");
+  tabs.forEach(tab => {
+    tab.addEventListener("click", () => {
+      const targetTab = tab.dataset.tab;
+      
+      // Update active tab button
+      document.querySelectorAll(".tab-btn").forEach(t => t.classList.remove("active"));
+      tab.classList.add("active");
+      
+      // Update active tab content
+      document.querySelectorAll(".tab-content").forEach(c => c.style.display = "none");
+      const content = document.getElementById(`${targetTab}-tab`);
+      if (content) content.style.display = "block";
+    });
+  });
 }
 
-// Load rules
+function showPINCreation() {
+  document.getElementById("lock-screen").classList.remove("hidden");
+  document.getElementById("main-content").classList.add("hidden");
+  document.getElementById("pin-hint").textContent = "Create your parent PIN to secure these settings";
+  
+  const unlockBtn = document.getElementById("unlock-btn");
+  unlockBtn.textContent = "Create PIN";
+  
+  unlockBtn.onclick = async () => {
+    const pin = document.getElementById("pin-input").value;
+    
+    if (!pin || pin.length < 4) {
+      document.getElementById("pin-error").textContent = "PIN must be at least 4 digits";
+      document.getElementById("pin-error").classList.remove("hidden");
+      return;
+    }
+    
+    const confirmPin = prompt("Confirm your PIN:");
+    if (pin !== confirmPin) {
+      document.getElementById("pin-error").textContent = "PINs don't match";
+      document.getElementById("pin-error").classList.remove("hidden");
+      return;
+    }
+    
+    // Hash PIN with PBKDF2
+    const hashedPin = await crypto.hashPin(pin);
+    await chrome.storage.local.set({ pin: hashedPin });
+    
+    // Generate recovery codes
+    const batch = await crypto.createRecoveryBatch(10);
+    await chrome.storage.local.set({ recovery_batches: [batch] });
+    
+    // Show codes to user (ONLY TIME)
+    const codes = batch.codes.map(c => c.plaintext).join("\n");
+    alert(`⚠️ SAVE THESE RECOVERY CODES NOW!\n\nThey will only be shown once:\n\n${codes}\n\nStore them securely offline.`);
+    
+    showMainContent();
+  };
+  
+  // Forgot PIN button
+  document.getElementById("forgot-pin-btn").onclick = forgotPIN;
+}
+
+function showPINEntry() {
+  document.getElementById("lock-screen").classList.remove("hidden");
+  document.getElementById("main-content").classList.add("hidden");
+  document.getElementById("pin-hint").textContent = "";
+  
+  const unlockBtn = document.getElementById("unlock-btn");
+  unlockBtn.textContent = "Unlock";
+  
+  unlockBtn.onclick = async () => {
+    const pin = document.getElementById("pin-input").value;
+    const result = await verifyPIN(pin);
+    
+    if (result.valid) {
+      showMainContent();
+    } else {
+      document.getElementById("pin-error").textContent = "Incorrect PIN";
+      document.getElementById("pin-error").classList.remove("hidden");
+    }
+  };
+  
+  // Forgot PIN button
+  document.getElementById("forgot-pin-btn").onclick = forgotPIN;
+}
+
+async function forgotPIN() {
+  const code = prompt("🔑 Enter recovery code (format: XXXX-XXXX-XXXX):");
+  if (!code) return;
+  
+  // Validate format
+  if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
+    alert("❌ Invalid format. Use: XXXX-XXXX-XXXX");
+    return;
+  }
+  
+  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
+  
+  let verified = false;
+  let batchToUpdate = null;
+  
+  for (const batch of recovery_batches) {
+    if (!batch.active) continue;
+    
+    for (const recoveryCode of batch.codes) {
+      if (recoveryCode.used) continue;
+      
+      const isValid = await crypto.verifyRecoveryCode(code, recoveryCode.hash, recoveryCode.salt);
+      if (isValid) {
+        verified = true;
+        recoveryCode.used = true;
+        recoveryCode.used_at = new Date().toISOString();
+        batchToUpdate = batch;
+        break;
+      }
+    }
+    if (verified) break;
+  }
+  
+  if (!verified) {
+    alert("❌ Invalid or already used recovery code");
+    return;
+  }
+  
+  // Save updated batch
+  await chrome.storage.local.set({ recovery_batches });
+  
+  alert("✅ Recovery code verified!");
+  
+  // Reset PIN
+  const newPin = prompt("Enter your new PIN (at least 4 digits):");
+  if (!newPin || newPin.length < 4) {
+    alert("❌ PIN must be at least 4 digits");
+    return;
+  }
+  
+  const confirmPin = prompt("Confirm your new PIN:");
+  if (newPin !== confirmPin) {
+    alert("❌ PINs don't match");
+    return;
+  }
+  
+  const hashedPin = await crypto.hashPin(newPin);
+  await chrome.storage.local.set({ pin: hashedPin });
+  
+  alert("✅ PIN reset successfully!");
+  
+  // Auto-unlock
+  showMainContent();
+}
+
+function setupButtonHandlers() {
+  // Save settings
+  document.getElementById("save-backend-btn")?.addEventListener("click", saveSettings);
+  
+  // Add rule
+  document.getElementById("add-rule-btn")?.addEventListener("click", addRule);
+  
+  // Change PIN
+  document.getElementById("change-pin-btn")?.addEventListener("click", changePIN);
+  
+  // Download recovery codes
+  document.getElementById("download-codes-btn")?.addEventListener("click", downloadRecoveryCodes);
+  
+  // Regenerate recovery codes
+  document.getElementById("regenerate-codes-btn")?.addEventListener("click", regenerateRecoveryCodes);
+  
+  // Export rules
+  document.getElementById("export-rules-btn")?.addEventListener("click", exportRules);
+  
+  // Import rules
+  document.getElementById("import-rules-btn")?.addEventListener("click", () => {
+    document.getElementById("import-file-input").click();
+  });
+  
+  document.getElementById("import-file-input")?.addEventListener("change", importRules);
+  
+  // Factory reset
+  document.getElementById("factory-reset-btn")?.addEventListener("click", factoryReset);
+}
+
+async function saveSettings() {
+  const backendUrl = document.getElementById("backend-url").value.trim();
+  const apiToken = document.getElementById("api-token").value.trim();
+  
+  await chrome.storage.local.set({
+    gc_backend_url: backendUrl,
+    gc_api_token: apiToken
+  });
+  
+  showStatus("backend-status", "✅ Settings saved successfully", "success");
+}
+
+async function loadSettings() {
+  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
+    "gc_backend_url",
+    "gc_api_token"
+  ]);
+  
+  if (gc_backend_url) document.getElementById("backend-url").value = gc_backend_url;
+  if (gc_api_token) document.getElementById("api-token").value = gc_api_token;
+}
+
 async function loadRules() {
   const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
     "gc_backend_url",
@@ -65,21 +282,23 @@ async function loadRules() {
   ]);
   
   const rulesList = document.getElementById("rules-list");
-  if (!rulesList) return;
   
   if (!gc_backend_url) {
-    rulesList.innerHTML = '<div class="empty-state">Configure backend settings first</div>';
+    rulesList.innerHTML = '<div class="empty-state">Configure backend first</div>';
     return;
   }
   
   try {
-  const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules?enabled_only=false`, {
+    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/?enabled_only=true`, {
       headers: {
         "Authorization": `Bearer ${gc_api_token}`
       }
     });
     
-    if (!response.ok) throw new Error("Failed to fetch rules");
+    if (!response.ok) {
+      rulesList.innerHTML = '<div class="empty-state">Failed to load rules</div>';
+      return;
+    }
     
     const rules = await response.json();
     
@@ -89,97 +308,61 @@ async function loadRules() {
     }
     
     const html = rules.map(rule => {
-      const patternDisplay = rule.rule_type === "time_window" 
-        ? formatTimeWindow(rule.pattern)
-        : rule.pattern;
+      const badgeClass = `badge-${rule.rule_type}`;
+      const enabledBadge = rule.enabled ? 
+        '<span class="badge badge-enabled">Enabled</span>' : 
+        '<span class="badge badge-disabled">Disabled</span>';
+      
+      const pattern = rule.rule_type === "time_window" ? 
+        formatTimeWindow(rule.pattern) : 
+        rule.pattern;
       
       return `
         <div class="rule-card">
           <div class="rule-header">
             <div class="rule-info">
-              <h4>
-                <span class="badge badge-${rule.rule_type}">${rule.rule_type}</span>
-                ${patternDisplay}
-              </h4>
+              <h4>${pattern}</h4>
               <div class="rule-meta">
-                ${rule.category ? `Category: ${rule.category} • ` : ""}
-                ${rule.explanation}
+                <span class="badge ${badgeClass}">${rule.rule_type}</span>
+                ${enabledBadge}
+                ${rule.category ? `<span class="badge">${rule.category}</span>` : ''}
               </div>
             </div>
             <div class="rule-actions">
-              <button class="secondary rule-toggle-btn" data-rule-id="${rule.id}" data-next-enabled="${!rule.enabled}">
-                ${rule.enabled ? "Disable" : "Enable"}
-              </button>
-              <button class="danger rule-delete-btn" data-rule-id="${rule.id}">Delete</button>
+              <button class="secondary" onclick="deleteRule(${rule.id})">Delete</button>
             </div>
           </div>
-          <span class="badge badge-${rule.enabled ? 'enabled' : 'disabled'}">
-            ${rule.enabled ? 'Active' : 'Disabled'}
-          </span>
+          ${rule.explanation ? `<p style="margin-top:8px;color:var(--gc-text-dim);font-size:13px;">${rule.explanation}</p>` : ''}
         </div>
       `;
     }).join("");
     
     rulesList.innerHTML = html;
   } catch (e) {
-    rulesList.innerHTML = `<div class="empty-state">Error loading rules: ${e.message}</div>`;
+    console.error("Failed to load rules:", e);
+    rulesList.innerHTML = '<div class="empty-state">Error loading rules</div>';
   }
 }
 
-// Format time window display
 function formatTimeWindow(pattern) {
   try {
     const config = JSON.parse(pattern);
-    const days = config.days || [];
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const days = config.days || [];
     const daysStr = days.length === 7 ? "Every day" : days.map(d => dayNames[d]).join(", ");
-    return `${config.start_hour}:00 - ${config.end_hour}:00 (${daysStr})`;
+    return `${config.start_hour}:00-${config.end_hour}:00 (${daysStr})`;
   } catch {
     return pattern;
   }
 }
 
-// Toggle rule enabled/disabled  
-window.toggleRule = async function(ruleId, enable) {
-  console.log("[toggleRule] Called:", ruleId, enable);
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
-    "gc_backend_url",
-    "gc_api_token"
-  ]);
+async function addRule() {
+  const ruleType = document.getElementById("rule-type").value;
+  const pattern = document.getElementById("rule-pattern").value.trim();
+  const explanation = document.getElementById("rule-explanation").value.trim();
   
-  console.log("[toggleRule] Backend URL:", gc_backend_url);
-  
-  try {
-  const url = `${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}`;
-    console.log("[toggleRule] Fetching:", url);
-    
-    const response = await fetch(url, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${gc_api_token}`
-      },
-      body: JSON.stringify({ enabled: enable })
-    });
-    
-    console.log("[toggleRule] Response status:", response.status);
-    
-    if (!response.ok) throw new Error("Failed to update rule");
-    
-    console.log("[toggleRule] Success, reloading rules...");
-    loadRules();
-    chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
-  } catch (e) {
-    console.error("[toggleRule] Error:", e);
-    alert(`Error: ${e.message}`);
-  }
-};
-
-// Delete rule
-window.deleteRule = async function(ruleId) {
-  console.log("[deleteRule] Called:", ruleId);
-  if (!confirm("Are you sure you want to delete this rule?")) {
-    console.log("[deleteRule] User cancelled");
+  if (!pattern) {
+    showStatus("add-rule-status", "Pattern is required", "error");
     return;
   }
   
@@ -188,259 +371,284 @@ window.deleteRule = async function(ruleId) {
     "gc_api_token"
   ]);
   
-  console.log("[deleteRule] Backend URL:", gc_backend_url);
+  if (!gc_backend_url) {
+    showStatus("add-rule-status", "Configure backend first", "error");
+    return;
+  }
   
   try {
-  const url = `${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}`;
-    console.log("[deleteRule] Fetching:", url);
+    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${gc_api_token}`
+      },
+      body: JSON.stringify({
+        rule_type: ruleType,
+        pattern: pattern,
+        explanation: explanation || null,
+        enabled: true
+      })
+    });
     
-    const response = await fetch(url, {
+    if (!response.ok) throw new Error("Failed to create rule");
+    
+    showStatus("add-rule-status", "✅ Rule created successfully", "success");
+    document.getElementById("rule-pattern").value = "";
+    document.getElementById("rule-explanation").value = "";
+    loadRules();
+  } catch (e) {
+    console.error("Failed to add rule:", e);
+    showStatus("add-rule-status", "❌ Failed to create rule: " + e.message, "error");
+  }
+}
+
+async function deleteRule(ruleId) {
+  if (!confirm("Delete this rule?")) return;
+  
+  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
+    "gc_backend_url",
+    "gc_api_token"
+  ]);
+  
+  try {
+    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}/`, {
       method: "DELETE",
       headers: {
         "Authorization": `Bearer ${gc_api_token}`
       }
     });
     
-    console.log("[deleteRule] Response status:", response.status);
-    
     if (!response.ok) throw new Error("Failed to delete rule");
     
-    console.log("[deleteRule] Success, reloading rules...");
     loadRules();
-    chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
   } catch (e) {
-    console.error("[deleteRule] Error:", e);
-    alert(`Error: ${e.message}`);
+    console.error("Failed to delete rule:", e);
+    alert("Failed to delete rule");
   }
-};
+}
 
-// Initialize after DOM loads
-document.addEventListener("DOMContentLoaded", () => {
-  console.log("[Options] DOM Content Loaded");
+// Make deleteRule global
+window.deleteRule = deleteRule;
+
+async function changePIN() {
+  const currentPin = prompt("Enter your current PIN:");
+  if (!currentPin) return;
   
-  // Auto-focus PIN input
-  const pinInput = document.getElementById("pin-input");
-  if (pinInput) pinInput.focus();
-  
-  // PIN unlock
-  const unlockBtn = document.getElementById("unlock-btn");
-  if (unlockBtn) {
-    unlockBtn.addEventListener("click", async () => {
-      const pin = pinInput?.value.trim();
-      
-      if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-        showStatus("pin-status", "PIN must be 4 digits", "error");
-        return;
-      }
-      
-      const isValid = await verifyPIN(pin);
-      if (isValid) {
-        showMainContent();
-      } else {
-        showStatus("pin-status", "Incorrect PIN", "error");
-        if (pinInput) pinInput.value = "";
-      }
-    });
+  const result = await verifyPIN(currentPin);
+  if (!result.valid) {
+    alert("Incorrect PIN");
+    return;
   }
   
-  // Enter key to unlock
-  if (pinInput) {
-    pinInput.addEventListener("keypress", (e) => {
-      if (e.key === "Enter") {
-        unlockBtn?.click();
-      }
-    });
+  const newPin = prompt("Enter your new PIN (at least 4 digits):");
+  if (!newPin || newPin.length < 4) {
+    alert("PIN must be at least 4 digits");
+    return;
   }
   
-  // Save backend settings
-  const saveBackendBtn = document.getElementById("save-backend-btn");
-  if (saveBackendBtn) {
-    saveBackendBtn.addEventListener("click", async () => {
-      const backendUrl = document.getElementById("backend-url")?.value.trim();
-      const apiToken = document.getElementById("api-token")?.value.trim();
-      const parentPin = document.getElementById("parent-pin")?.value.trim();
-      
-      if (!backendUrl || !apiToken) {
-        showStatus("backend-status", "Backend URL and API Token are required", "error");
-        return;
-      }
-      
-      if (parentPin && (parentPin.length !== 4 || !/^\d{4}$/.test(parentPin))) {
-        showStatus("backend-status", "PIN must be 4 digits", "error");
-        return;
-      }
-      
-      try {
-        new URL(backendUrl);
-      } catch (e) {
-        showStatus("backend-status", "Invalid URL format", "error");
-        return;
-      }
-      
-      await chrome.storage.local.set({
-        gc_backend_url: backendUrl,
-        gc_api_token: apiToken,
-        parent_pin: parentPin || "1234"
-      });
-      
-      showStatus("backend-status", "Settings saved successfully!", "success");
-      
-      // Notify background to refresh rules
-      chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
-    });
+  const confirmPin = prompt("Confirm your new PIN:");
+  if (newPin !== confirmPin) {
+    alert("PINs don't match");
+    return;
   }
   
-  // Rule type change handler
-  const ruleTypeSelect = document.getElementById("rule-type");
-  if (ruleTypeSelect) {
-    ruleTypeSelect.addEventListener("change", (e) => {
-      const isTimeWindow = e.target.value === "time_window";
-      const domainGroup = document.getElementById("domain-input-group");
-      const timeGroup = document.getElementById("time-input-group");
-      if (domainGroup) domainGroup.classList.toggle("hidden", isTimeWindow);
-      if (timeGroup) timeGroup.classList.toggle("hidden", !isTimeWindow);
-    });
+  const hashedPin = await crypto.hashPin(newPin);
+  await chrome.storage.local.set({ pin: hashedPin });
+  
+  alert("✅ PIN changed successfully!");
+}
+
+async function loadRecoveryStatus() {
+  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
+  const statusDiv = document.getElementById("recovery-status");
+  
+  if (recovery_batches.length === 0) {
+    statusDiv.innerHTML = '<div class="empty-state">No recovery codes generated</div>';
+    return;
   }
   
-  // Day selector
-  document.querySelectorAll(".day-btn").forEach(btn => {
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      const day = parseInt(btn.dataset.day);
-      const isSelected = btn.classList.contains("selected");
-      
-      if (isSelected) {
-        btn.classList.remove("selected");
-        selectedDays = selectedDays.filter(d => d !== day);
-      } else {
-        btn.classList.add("selected");
-        selectedDays.push(day);
-      }
-      selectedDays.sort();
-    });
+  const activeBatch = recovery_batches.find(b => b.active);
+  if (!activeBatch) {
+    statusDiv.innerHTML = '<div class="empty-state">No active recovery codes</div>';
+    return;
+  }
+  
+  const usedCount = activeBatch.codes.filter(c => c.used).length;
+  const unusedCount = activeBatch.codes.length - usedCount;
+  
+  statusDiv.innerHTML = `
+    <div class="panel">
+      <p><strong>Active Batch:</strong> ${activeBatch.id.substring(0, 8)}...</p>
+      <p><strong>Created:</strong> ${new Date(activeBatch.created_at).toLocaleString()}</p>
+      <p><strong>Unused Codes:</strong> ${unusedCount} of ${activeBatch.codes.length}</p>
+      ${usedCount > 0 ? `<p style="color:var(--gc-warn)"><strong>Used Codes:</strong> ${usedCount}</p>` : ''}
+    </div>
+  `;
+}
+
+async function downloadRecoveryCodes() {
+  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
+  const activeBatch = recovery_batches.find(b => b.active);
+  
+  if (!activeBatch) {
+    alert("No active recovery codes batch");
+    return;
+  }
+  
+  // Get codes in plaintext (they're already hashed in storage, so we can't show originals)
+  alert("⚠️ Recovery codes are only shown once during generation.\n\nTo get new codes, use 'Regenerate Codes' (requires PIN).");
+}
+
+async function regenerateRecoveryCodes() {
+  const pin = prompt("⚠️ This will invalidate ALL existing recovery codes.\n\nEnter your PIN to confirm:");
+  if (!pin) return;
+  
+  const result = await verifyPIN(pin);
+  if (!result.valid) {
+    alert("❌ Incorrect PIN. Cannot regenerate codes.");
+    return;
+  }
+  
+  if (!confirm("Are you sure? All existing recovery codes will stop working.")) return;
+  
+  // Deactivate old batches
+  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
+  recovery_batches.forEach(b => b.active = false);
+  
+  // Generate new batch
+  const newBatch = await crypto.createRecoveryBatch(10);
+  recovery_batches.push(newBatch);
+  
+  await chrome.storage.local.set({ recovery_batches });
+  
+  // Show codes (only time)
+  const codes = newBatch.codes.map(c => c.plaintext).join("\n");
+  const codesText = `GuardianCore Recovery Codes
+Generated: ${new Date().toISOString()}
+Batch ID: ${newBatch.id}
+
+SAVE THESE CODES SECURELY!
+Each code can only be used once.
+
+${codes}
+
+---
+Store this file offline in a secure location.
+`;
+  
+  // Download as file
+  const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
+  const filename = `guardian_recovery_codes_${date}_${newBatch.id.substring(0, 8)}.txt`;
+  
+  const blob = new Blob([codesText], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  
+  chrome.downloads.download({
+    url: url,
+    filename: filename,
+    saveAs: true
+  }, () => {
+    URL.revokeObjectURL(url);
+    alert(`✅ Recovery codes generated and downloaded!\n\nFile: ${filename}\n\nKeep this file safe and offline.`);
+    loadRecoveryStatus();
   });
+}
+
+async function exportRules() {
+  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
+    "gc_backend_url",
+    "gc_api_token"
+  ]);
   
-  // Add rule
-  const addRuleBtn = document.getElementById("add-rule-btn");
-  if (addRuleBtn) {
-    addRuleBtn.addEventListener("click", async () => {
+  if (!gc_backend_url) {
+    alert("Configure backend first");
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/export`, {
+      headers: {
+        "Authorization": `Bearer ${gc_api_token}`
+      }
+    });
+    
+    if (!response.ok) throw new Error("Failed to export");
+    
+    const data = await response.json();
+    const json = JSON.stringify(data, null, 2);
+    
+    const date = new Date().toISOString().split('T')[0];
+    const filename = `guardiancore_rules_${date}.json`;
+    
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    chrome.downloads.download({
+      url: url,
+      filename: filename,
+      saveAs: true
+    }, () => {
+      URL.revokeObjectURL(url);
+      showStatus("export-status", "✅ Rules exported successfully", "success");
+    });
+  } catch (e) {
+    console.error("Export failed:", e);
+    showStatus("export-status", "❌ Export failed: " + e.message, "error");
+  }
+}
+
+async function importRules(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      
       const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
         "gc_backend_url",
         "gc_api_token"
       ]);
       
       if (!gc_backend_url) {
-        showStatus("add-rule-status", "Configure backend settings first", "error");
+        alert("Configure backend first");
         return;
       }
       
-      const ruleType = document.getElementById("rule-type")?.value;
-      let pattern;
+      const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/import`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${gc_api_token}`
+        },
+        body: JSON.stringify(data)
+      });
       
-      if (ruleType === "time_window") {
-        const startHour = parseInt(document.getElementById("start-hour")?.value || "0");
-        const endHour = parseInt(document.getElementById("end-hour")?.value || "0");
-        
-        if (isNaN(startHour) || isNaN(endHour) || startHour < 0 || startHour > 23 || endHour < 0 || endHour > 23) {
-          showStatus("add-rule-status", "Invalid hour values (must be 0-23)", "error");
-          return;
-        }
-        
-        if (selectedDays.length === 0) {
-          showStatus("add-rule-status", "Select at least one day", "error");
-          return;
-        }
-        
-        pattern = JSON.stringify({
-          start_hour: startHour,
-          end_hour: endHour,
-          days: selectedDays
-        });
-      } else {
-        pattern = document.getElementById("rule-pattern")?.value.trim();
-        if (!pattern) {
-          showStatus("add-rule-status", "Domain pattern is required", "error");
-          return;
-        }
-        // Remove common prefixes
-        pattern = pattern.replace(/^(https?:\/\/)?(www\.)?/, "");
-      }
+      if (!response.ok) throw new Error("Import failed");
       
-      const category = document.getElementById("rule-category")?.value.trim();
-      const explanation = document.getElementById("rule-explanation")?.value.trim();
-      
-      if (!explanation) {
-        showStatus("add-rule-status", "Please provide an explanation for this rule", "error");
-        return;
-      }
-      
-      const rule = {
-        rule_type: ruleType,
-        pattern: pattern,
-        category: category || null,
-        explanation: explanation,
-        enabled: true
-      };
-      
-      try {
-  const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${gc_api_token}`
-          },
-          body: JSON.stringify(rule)
-        });
-        
-        if (!response.ok) {
-          const error = await response.json();
-          throw new Error(error.detail || "Failed to create rule");
-        }
-        
-        showStatus("add-rule-status", "Rule created successfully!", "success");
-        
-        // Clear form
-        const patternEl = document.getElementById("rule-pattern");
-        const categoryEl = document.getElementById("rule-category");
-        const explanationEl = document.getElementById("rule-explanation");
-        if (patternEl) patternEl.value = "";
-        if (categoryEl) categoryEl.value = "";
-        if (explanationEl) explanationEl.value = "";
-        
-        // Refresh rules list
-        loadRules();
-        
-        // Notify background to refresh
-        chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
-      } catch (e) {
-        showStatus("add-rule-status", `Error: ${e.message}`, "error");
-      }
-    });
-  }
-  
-  // Refresh rules button
-  const refreshRulesBtn = document.getElementById("refresh-rules-btn");
-  if (refreshRulesBtn) {
-    refreshRulesBtn.addEventListener("click", () => {
+      const result = await response.json();
+      showStatus("import-status", `✅ Imported ${result.imported_count} rules`, "success");
       loadRules();
-      chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
-    });
-  }
+    } catch (e) {
+      console.error("Import failed:", e);
+      showStatus("import-status", "❌ Import failed: " + e.message, "error");
+    }
+  };
+  reader.readAsText(file);
+}
 
-  // Event delegation for rule action buttons (toggle/delete)
-  const rulesListEl = document.getElementById("rules-list");
-  if (rulesListEl) {
-    rulesListEl.addEventListener("click", (e) => {
-      const target = e.target;
-      if (!(target instanceof Element)) return;
-      if (target.classList.contains("rule-toggle-btn")) {
-        const ruleId = parseInt(target.getAttribute("data-rule-id") || "0", 10);
-        const nextEnabled = target.getAttribute("data-next-enabled") === "true";
-        if (ruleId) window.toggleRule(ruleId, nextEnabled);
-      } else if (target.classList.contains("rule-delete-btn")) {
-        const ruleId = parseInt(target.getAttribute("data-rule-id") || "0", 10);
-        if (ruleId) window.deleteRule(ruleId);
-      }
-    });
-  }
-});
+async function factoryReset() {
+  const warning = "⚠️ This will erase:\n- Local rules cache\n- PIN\n- Recovery codes\n- All settings\n\nThis CANNOT be undone!";
+  
+  if (!confirm(warning)) return;
+  
+  if (!confirm("Are you ABSOLUTELY SURE? Type YES to confirm.") !== "YES") return;
+  
+  // Clear all storage
+  await chrome.storage.local.clear();
+  
+  // Reload extension
+  chrome.runtime.reload();
+}
