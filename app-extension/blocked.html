@@ -2,6 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Content Blocked - GuardianCore</title>
     <style>
       :root { --bg:#0f172a; --accent:#6366f1; --accent-rgb:99,102,241; --panel:#1e293b; --panel-alt:#162132; --danger:#ef4444; --warn:#f59e0b; --radius:20px; --text:#f1f5f9; --text-dim:#94a3b8; }
@@ -27,7 +28,6 @@
   </head>
   <body>
     <div class="container">
-      <div class="icon">🛡️</div>
       <h1>Content Blocked</h1>
       <div class="reason" id="reason">This content has been blocked by parental controls.</div>
       <div class="category" id="category">Restricted Content</div>
@@ -35,7 +35,6 @@
         <strong>Why am I seeing this?</strong>
         <p>A parent or guardian has set up rules to protect you from certain types of content. This helps ensure a safer browsing experience.</p>
       </div>
-      <button onclick="history.back()">Return to Previous Page</button>
       <footer><span>GuardianCore</span> — safer browsing, clearly explained.</footer>
     </div>
     <script src="blocked.js"></script>
