@@ -1,9 +1,9 @@
 # GuardianCore Week 4 - Complete Documentation
 
-**Version:** 0.4.1 (Security Patch)  
+**Version:** 0.4.2 (Active Time & Dev Tools)  
 **Released:** October 4, 2025  
 **Branch:** phase-4  
-**Focus:** Gamification, Risk Scoring, Security Hardening
+**Focus:** Gamification, Risk Scoring, Security Hardening, Active-Time Streak, Developer Tooling
 
 ---
 
@@ -25,16 +25,19 @@
 
 Week 4 delivers production-ready gamification cues, risk scoring, and hardened security for GuardianCore's privacy-focused parental controls.
 
-### Key Achievements ✅
+### Key Achievements (Cumulative) ✅
 
-- 🔐 **Hardened PIN Storage**: PBKDF2-SHA-256 with 310k iterations
-- 🎮 **Gamification Cues**: Safe streak hours, risk score display
-- 📊 **Risk Scoring v1**: Weighted algorithm analyzing audit data
-- 🔑 **10 Recovery Codes**: One-time use, PBKDF2-hashed
-- ⚡ **Real-Time Updates**: Background polling every 30 seconds
-- 🔒 **Security Loophole Closed**: PIN required for code regeneration
-- 👥 **Role Separation**: Parent (PIN-gated) vs Child (view-only)
-- 💾 **Export/Import**: JSON v1 schema for rules backup
+- 🔐 **Hardened PIN Storage**: PBKDF2-SHA-256 (310k iterations)
+- 🔑 **Recovery Codes**: 10 one‑time codes (unique salt + PBKDF2)
+- 🎮 **Gamification v2**: Active browsing streak accumulator + fast mode
+- 📊 **Risk Scoring v1**: Weighted privacy / restriction signals (0–100)
+- 🛰️ **Real-Time Updates**: 30s polling + targeted push events
+- 🧪 **Dev / Test Tools** (hidden): Simulate violation, add safe hours, live risk refresh
+- 🛠 **Options Tab**: Consolidated PIN + fast mode toggle (Security tab renamed)
+- 🚫 **Rule Explanations Removed**: Prevents leaking rationale to curious users
+- 💾 **Export/Import v2**: Endpoints moved to `/rules/all/export` & `/rules/all/import`
+- 🧱 **Security Loophole Closed**: Regeneration of recovery codes now PIN-gated
+- 👥 **Strict Role Separation**: Child popup remains read-only & rule‑blind
 
 ---
 
@@ -131,31 +134,26 @@ score = max(0, min(100, score))  # Clamp to [0, 100]
 
 ### 2. Gamification Cues (Extension - Local)
 
-**Safe Streak Bar** (Popup):
-- Tracks hours since last violation
-- Reset on blocking event
-- Persists across browser restarts
-- Color-coded display:
-  - Green: 0-24 hours
-  - Blue: 25+ hours
+**Safe Streak (Active Time Model)**:
+- Tracks **active browsing time** (navigations + heartbeat) since last violation
+- Heartbeat: every 5 min normal / every 10s in Fast Mode
+- Resets on blocked navigation (violation)
+- Fast Mode (test only): 1 minute counts as 1 hour (via Options tab toggle)
+- Persists accumulated milliseconds in `gc_active_ms`
+- Display: single green numeric hour count + compliant message at ≥12h
 
 **Risk Score Display** (Popup):
-- Fetched from backend every 30s
-- Color-coded:
-  - Green: 0-29 (low risk)
-  - Yellow: 30-69 (medium risk)
-  - Red: 70-100 (high risk)
-- Shows breakdown on hover
+- Polled every 30s (and on popup open)
+- Color-coded: Green (0–29), Yellow (30–69), Red (70–100)
+- Hidden dev panel (unlock: press 'D' 5×) reveals textual breakdown block
 
-**Time-Left Nudges** (Background):
-- 15-minute warning before time window closes
-- Lightweight toast notification
-- No PII transmitted
+**Time-Left Nudges**:
+- 15‑minute warning before a time window starts (if within upcoming window)
+- Lightweight local message (no server call)
 
 **Compliant Message**:
-- Shows when streak ≥12 hours
-- Encourages positive behavior
-- GDPR-safe (no server transmission)
+- Appears when active safe streak ≥12 hours
+- Purely local; not sent to backend
 
 ### 3. Hardened PIN Storage (Extension)
 
@@ -265,9 +263,11 @@ score = max(0, min(100, score))  # Clamp to [0, 100]
 - Popup is always accessible (read-only)
 - PIN required for sensitive operations
 
-### 7. Export/Import (Backend)
+### 7. Export/Import (Backend) – Updated
 
-**Export Endpoint:** `GET /rules/export`
+Legacy endpoints were refactored to avoid path conflicts with dynamic rule IDs. Current stable endpoints:
+
+**Export Endpoint:** `GET /rules/all/export`
 
 **Response:**
 ```json
@@ -286,7 +286,7 @@ score = max(0, min(100, score))  # Clamp to [0, 100]
 }
 ```
 
-**Import Endpoint:** `POST /rules/import`
+**Import Endpoint:** `POST /rules/all/import`
 
 **Request Body:**
 ```json
@@ -808,7 +808,13 @@ curl -X POST http://localhost:8000/rules/import \
      -H "Authorization: Bearer dev-token-123"
 ```
 
-### Issue: Gamification Not Showing
+### Issue: Gamification Not Showing / Streak Stuck at 0
+
+**Added in v0.4.2:** Streak depends on *active* time. If you just leave a static tab open and never navigate, only the heartbeat increments (every 5 min normal / 10s fast mode). To test quickly:
+1. Enable Fast Mode in Options.
+2. Browse 2–3 different sites (causes immediate activity accumulation).
+3. Open popup – streak should grow every 10s.
+4. Simulate violation (dev tools in popup: press 'D' 5 times → "Simulate Violation"). Streak resets to 0.
 
 **Symptoms:**
 - Popup doesn't show safe streak or risk score
@@ -854,12 +860,12 @@ curl -X POST http://localhost:8000/rules/import \
 - `strings.js` - Centralized UI strings (i18n-ready)
 
 **Modified Files:**
-- `manifest.json` - Version 0.4.1, downloads permission, module type
-- `options.js` - PIN setup/verify, recovery codes, tabs, button handlers
-- `options.html` - Multi-tab layout, PIN lock screen, recovery UI
-- `popup.js` - Gamification state display, real-time updates
-- `popup.html` - Safe streak bar, risk score display
-- `background.js` - Polling, gamification tracking, message handlers
+- `manifest.json` - Version updates, downloads permission
+- `options.js` - PIN + recovery + backend config + fast mode persistence
+- `options.html` - Security tab renamed to Options; rule explanations removed; fast mode toggle added
+- `popup.js` - Dev unlock (5× 'D'), risk breakdown, simulation handlers
+- `popup.html` - Risk breakdown container, hidden Dev Tools panel
+- `background.js` - Active-time streak accumulator, heartbeat, fast mode, dev message handlers
 
 **Lines Changed:**
 - `options.js`: 661 lines (was 605)
@@ -870,6 +876,32 @@ curl -X POST http://localhost:8000/rules/import \
 ---
 
 ## Changelog
+
+### v0.4.2 (October 4, 2025) - Active Time & Dev Tools
+
+#### 🎮 Gamification Enhancements
+- Replaced naive wall-clock streak with *active browsing accumulator* (navigation + heartbeat)
+- Fast Mode toggle (Options tab) accelerates streak (10s tick cadence)
+- Heartbeat persistence (`gc_active_ms`) ensures continuity after service worker restarts
+
+#### 🧪 Developer / QA Tooling
+- Hidden popup Dev Tools (press 'D' quickly 5×) with buttons:
+  - Enable/Disable Fast Mode
+  - Simulate Violation
+  - Add Safe Hours (synthetic)
+  - Refresh Risk Now
+- Risk input breakdown panel exposed in dev mode
+
+#### 🔐 UX / Security Adjustments
+- Removed rule explanation field & rendering (prevents information leakage)
+- Centralized PIN actions under Options tab; removed algorithm wording from UI
+
+#### 🛠 API & Endpoint Updates
+- Standardized export/import endpoints → `/rules/all/export`, `/rules/all/import`
+
+#### 🐛 Fixes
+- Streak no longer stuck at 0 during long passive sessions (heartbeat accumulation)
+- PIN change now properly persists (uses unified `storePin` helper)
 
 ### v0.4.1 (October 4, 2025) - Security Patch
 
