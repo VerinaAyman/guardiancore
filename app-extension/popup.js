@@ -53,6 +53,8 @@ document.addEventListener("DOMContentLoaded", () => {
   loadCurrentTab().catch(e => console.error("[Popup] loadCurrentTab error:", e));
   // Removed loadActiveRules() - security: don't show rules to child
   loadStats().catch(e => console.error("[Popup] loadStats error:", e));
+  // Load XP state
+  requestXpState();
   
   // Listen for real-time updates from background
   chrome.runtime.onMessage.addListener(handleBackgroundMessage);
@@ -192,6 +194,8 @@ function handleBackgroundMessage(message, sender, sendResponse) {
     }
   } else if (message.type === "stats:update") {
     updateStatsDisplay(message.stats);
+  } else if (message.type === "xp:update") {
+    updateXpDisplay(message);
   }
 }
 
@@ -235,6 +239,7 @@ function attachDevToolsHandlers() {
   const vioBtn = document.getElementById('dev-violation');
   const addBtn = document.getElementById('dev-add-safe');
   const riskBtn = document.getElementById('dev-risk-refresh');
+  // Optionally add a reset XP button if dev tools present in future
   const statusEl = document.getElementById('dev-status');
   const addHoursInput = document.getElementById('dev-add-hours');
 
@@ -274,6 +279,21 @@ function attachDevToolsHandlers() {
       if (res?.ok) setStatus(`Risk refreshed: ${res.score}`); else setStatus('Risk refresh failed', 'status-error');
     });
   });
+}
+
+function requestXpState() {
+  chrome.runtime.sendMessage({ type: 'GET_XP_STATE' }, (res) => {
+    if (res) updateXpDisplay(res);
+  });
+}
+
+function updateXpDisplay(state) {
+  const xpVal = document.getElementById('xp-value');
+  const lvlEl = document.getElementById('xp-level');
+  const bar = document.getElementById('xp-bar-fill');
+  if (xpVal) xpVal.textContent = state.xp ?? 0;
+  if (lvlEl) lvlEl.textContent = state.level ?? 1;
+  if (bar) bar.style.width = `${Math.min(100, Math.round((state.progress || 0)*100))}%`;
 }
 
 function formatRiskBreakdown(breakdown) {

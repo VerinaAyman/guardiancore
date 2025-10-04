@@ -115,6 +115,17 @@
             <span class="stat-label">Risk Score</span>
             <span class="stat-value risk-low" id="risk-score-value">0</span>
           </div>
+          <div class="stat-row">
+            <span class="stat-label">Level</span>
+            <span class="stat-value" id="xp-level">1</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Daily XP</span>
+            <span class="stat-value" id="xp-value">0</span>
+          </div>
+          <div id="xp-bar" style="height:6px;border-radius:4px;background:#1e293b;overflow:hidden;margin-top:6px;">
+            <div id="xp-bar-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#8b5cf6);transition:width .3s ease;"></div>
+          </div>
           <div id="risk-breakdown" class="hidden risk-breakdown"></div>
           <div id="compliant-message" class="hidden compliant-msg">
             Great job! Keep up the safe browsing.

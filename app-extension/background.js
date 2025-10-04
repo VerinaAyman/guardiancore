@@ -52,6 +52,62 @@ let gamificationState = {
   lastActivityTs: null      // Last timestamp we considered user active
 };
 
+// XP (fast-feedback gamification) state (daily reset)
+let xpState = {
+  dayKey: null,  // 'YYYY-MM-DD'
+  xp: 0,
+  level: 1
+};
+
+async function loadXpState() {
+  try {
+    const { gc_xp_state } = await chrome.storage.local.get(["gc_xp_state"]);
+    if (gc_xp_state) xpState = gc_xp_state;
+    ensureXpDay();
+  } catch {}
+}
+
+function ensureXpDay() {
+  const today = new Date().toISOString().slice(0,10);
+  if (xpState.dayKey !== today) {
+    xpState.dayKey = today;
+    xpState.xp = 0;
+    // level persists across days (optional) – keep level
+    persistXp();
+  }
+}
+
+function persistXp() {
+  chrome.storage.local.set({ gc_xp_state: xpState });
+}
+
+function awardXp(event) {
+  ensureXpDay();
+  // event carries: trackers, csp, cors, blocked, violation (boolean)
+  let delta = 1; // base per navigation
+  if (event.csp) delta += 2;
+  if (event.cors) delta += 1;
+  if (event.trackers === 0) delta += 3; else delta -= Math.min(event.trackers, 5); // penalize trackers
+  if (event.blocked || event.violation) delta -= 5; // heavy penalty
+  if (delta < 0) delta = Math.max(delta, -7); // floor penalty
+  if (fastMode) delta *= 3; // accelerate in fast mode
+  xpState.xp += delta;
+  if (xpState.xp < 0) xpState.xp = 0;
+  while (xpState.xp >= 100) {
+    xpState.xp -= 100;
+    xpState.level += 1;
+  }
+  persistXp();
+  // Notify popup
+  chrome.runtime.sendMessage({
+    type: "xp:update",
+    xp: xpState.xp,
+    level: xpState.level,
+    progress: xpState.xp / 100,
+    delta
+  }).catch(() => {});
+}
+
 function ensureTab(tid) {
   if (!tabState.has(tid)) {
     tabState.set(tid, {
@@ -236,6 +292,9 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     gamificationState.safeStreakHours = 0;
     gamificationState.activeAccumulatedMs = 0; // reset active time
     await chrome.storage.local.set({ lastViolation: gamificationState.lastViolation, gc_active_ms: 0 });
+
+    // Award negative XP immediately
+    awardXp({ trackers: 0, csp: false, cors: false, blocked: true, violation: true });
     
     // Notify UIs about streak reset
     chrome.runtime.sendMessage({
@@ -302,6 +361,15 @@ chrome.webNavigation.onCompleted.addListener(async (nav) => {
       body: JSON.stringify(record),
       keepalive: true
     }).catch(() => {});
+
+    // Local fast-feedback XP award
+    awardXp({
+      trackers: st.trackerCount,
+      csp: record.policy_state.csp_present,
+      cors: record.policy_state.cors_signals,
+      blocked: record.policy_state.blocked,
+      violation: false
+    });
   } catch (e) {
     console.error("Audit submit error:", e);
   }
@@ -500,6 +568,7 @@ function scheduleBackgroundUpdate() {
 chrome.runtime.onInstalled.addListener(() => {
   console.log("GuardianCore Audit Probe installed");
   loadFastMode();
+  loadXpState();
   fetchRules();
   updateSafeStreak();
   scheduleBackgroundUpdate();
@@ -508,6 +577,7 @@ chrome.runtime.onInstalled.addListener(() => {
 
 chrome.runtime.onStartup.addListener(() => {
   loadFastMode();
+  loadXpState();
   fetchRules();
   updateSafeStreak();
   scheduleBackgroundUpdate();
@@ -581,5 +651,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === "DEV_FETCH_RISK") {
     fetchRiskScore().then(() => sendResponse({ ok: true, score: gamificationState.riskScore })).catch(() => sendResponse({ ok: false }));
     return true;
+  } else if (message.type === "GET_XP_STATE") {
+    ensureXpDay();
+    sendResponse({ xp: xpState.xp, level: xpState.level, progress: xpState.xp / 100 });
+  } else if (message.type === "DEV_RESET_XP") {
+    xpState.xp = 0; xpState.level = 1; persistXp();
+    chrome.runtime.sendMessage({ type: "xp:update", xp: xpState.xp, level: xpState.level, progress: 0, delta: 0 }).catch(() => {});
+    sendResponse({ ok: true });
   }
 });
