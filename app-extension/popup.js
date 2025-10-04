@@ -97,6 +97,10 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   
   console.log("[Popup] Initialization complete");
+
+  // Dev tools unlock: press D 5 times quickly inside popup to toggle
+  setupDevToolsHotkey();
+  attachDevToolsHandlers();
 });
 
 // Load gamification state (child-facing cues)
@@ -151,6 +155,14 @@ function handleBackgroundMessage(message, sender, sendResponse) {
     if (riskEl) {
       riskEl.textContent = message.score || 0;
     }
+    // Show breakdown
+    const breakdownEl = document.getElementById("risk-breakdown");
+    if (breakdownEl && message.breakdown) {
+      breakdownEl.textContent = formatRiskBreakdown(message.breakdown);
+      if (breakdownEl.classList.contains("hidden")) {
+        // Keep hidden unless dev tools enabled; it will be toggled there
+      }
+    }
   } else if (message.type === "nudge:streak") {
     const streakEl = document.getElementById("safe-streak-hours");
     if (streakEl) {
@@ -181,6 +193,95 @@ function handleBackgroundMessage(message, sender, sendResponse) {
   } else if (message.type === "stats:update") {
     updateStatsDisplay(message.stats);
   }
+}
+
+// --- Dev/Test Tooling ---
+let devUnlockClicks = 0;
+let devUnlockTimer = null;
+let devEnabled = false;
+
+function setupDevToolsHotkey() {
+  document.addEventListener('keydown', (e) => {
+    if (e.key.toLowerCase() === 'd') {
+      devUnlockClicks++;
+      if (!devUnlockTimer) {
+        devUnlockTimer = setTimeout(() => {
+          devUnlockClicks = 0;
+          devUnlockTimer = null;
+        }, 1500);
+      }
+      if (devUnlockClicks >= 5) {
+        toggleDevTools();
+        devUnlockClicks = 0;
+        clearTimeout(devUnlockTimer);
+        devUnlockTimer = null;
+      }
+    }
+  });
+}
+
+function toggleDevTools() {
+  devEnabled = !devEnabled;
+  const panel = document.getElementById('dev-tools');
+  if (panel) {
+    panel.classList.toggle('hidden', !devEnabled);
+  }
+  const breakdown = document.getElementById('risk-breakdown');
+  if (breakdown) breakdown.classList.toggle('hidden', !devEnabled);
+}
+
+function attachDevToolsHandlers() {
+  const fastBtn = document.getElementById('dev-toggle-fast');
+  const vioBtn = document.getElementById('dev-violation');
+  const addBtn = document.getElementById('dev-add-safe');
+  const riskBtn = document.getElementById('dev-risk-refresh');
+  const statusEl = document.getElementById('dev-status');
+  const addHoursInput = document.getElementById('dev-add-hours');
+
+  function setStatus(msg, cls='status-info') {
+    if (!statusEl) return;
+    statusEl.textContent = msg;
+    statusEl.className = `status ${cls}`;
+    statusEl.classList.remove('hidden');
+    setTimeout(() => statusEl.classList.add('hidden'), 3000);
+  }
+
+  if (fastBtn) fastBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'DEV_TOGGLE_FAST_MODE' }, (res) => {
+      if (!res) return;
+      fastBtn.textContent = res.fastMode ? 'Disable Fast Mode' : 'Enable Fast Mode';
+      setStatus(`Fast Mode: ${res.fastMode ? 'ON' : 'OFF'}`);
+    });
+  });
+
+  if (vioBtn) vioBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'DEV_SIMULATE_VIOLATION' }, () => {
+      setStatus('Simulated violation', 'status-warning');
+      loadGamificationState();
+    });
+  });
+
+  if (addBtn) addBtn.addEventListener('click', () => {
+    const hours = parseInt(addHoursInput.value || '1', 10) || 1;
+    chrome.runtime.sendMessage({ type: 'DEV_ADD_SAFE_TIME', hours }, () => {
+      setStatus(`Added ${hours} safe hour(s)`);
+      loadGamificationState();
+    });
+  });
+
+  if (riskBtn) riskBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'DEV_FETCH_RISK' }, (res) => {
+      if (res?.ok) setStatus(`Risk refreshed: ${res.score}`); else setStatus('Risk refresh failed', 'status-error');
+    });
+  });
+}
+
+function formatRiskBreakdown(breakdown) {
+  try {
+    if (typeof breakdown === 'string') return breakdown;
+    if (Array.isArray(breakdown)) return breakdown.map(kv => `${kv.key || kv.name}: ${kv.value || kv.score || kv.count}` ).join('\n');
+    return Object.entries(breakdown).map(([k,v]) => `${k}: ${v}`).join('\n');
+  } catch { return ''; }
 }
 
 async function loadSettings() {

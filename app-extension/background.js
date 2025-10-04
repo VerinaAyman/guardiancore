@@ -2,6 +2,19 @@
 // Week 4: Real-time updates, gamification cues, risk scoring
 console.log("GuardianCore Audit Probe v0.4.0 loaded");
 
+// --- Dev / Test Mode Enhancements (Week4 Gamification Testability) ---
+// Fast mode makes 1 minute count as 1 hour for safe streak progression.
+let fastMode = false; // cached flag
+async function loadFastMode() {
+  try {
+    const { gc_fast_mode } = await chrome.storage.local.get(["gc_fast_mode"]);
+    fastMode = !!gc_fast_mode;
+    if (fastMode) console.log("[Gamification] FAST MODE enabled (1 minute = 1 hour)");
+  } catch (e) {
+    // ignore
+  }
+}
+
 // Expanded tracker list with categories
 const TRACKERS = {
   "google-analytics.com": { category: "analytics", name: "Google Analytics", risk: "medium" },
@@ -352,6 +365,7 @@ function updateSafeStreak() {
   // Get browser start time and last violation
   chrome.storage.local.get(["browserStartTime", "lastViolation"]).then(({ browserStartTime, lastViolation }) => {
     const now = Date.now();
+    const timeUnitMs = fastMode ? (1000 * 60) : (1000 * 60 * 60); // minute vs hour
     
     // Initialize browser start time if not set
     if (!browserStartTime) {
@@ -362,12 +376,12 @@ function updateSafeStreak() {
     
     // If there's a recent violation, calculate from violation time
     if (lastViolation && lastViolation > browserStartTime) {
-      const hoursSinceViolation = Math.floor((now - lastViolation) / (1000 * 60 * 60));
+      const hoursSinceViolation = Math.floor((now - lastViolation) / timeUnitMs);
       gamificationState.safeStreakHours = Math.min(hoursSinceViolation, 999);
       gamificationState.lastViolation = lastViolation;
     } else {
       // No violations or old violation - calculate from browser start
-      const hoursSinceStart = Math.floor((now - browserStartTime) / (1000 * 60 * 60));
+      const hoursSinceStart = Math.floor((now - browserStartTime) / timeUnitMs);
       gamificationState.safeStreakHours = Math.min(hoursSinceStart, 999);
     }
   });
@@ -441,12 +455,14 @@ function scheduleBackgroundUpdate() {
 // Fetch rules on startup and periodically
 chrome.runtime.onInstalled.addListener(() => {
   console.log("GuardianCore Audit Probe installed");
+  loadFastMode();
   fetchRules();
   updateSafeStreak();
   scheduleBackgroundUpdate();
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  loadFastMode();
   fetchRules();
   updateSafeStreak();
   scheduleBackgroundUpdate();
@@ -477,5 +493,47 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === "CHECK_TIME_NUDGE") {
     checkTimeLeftNudges();
     sendResponse({ ok: true });
+  // --- Dev/Test message handlers ---
+  } else if (message.type === "DEV_TOGGLE_FAST_MODE") {
+    fastMode = !fastMode;
+    chrome.storage.local.set({ gc_fast_mode: fastMode });
+    updateSafeStreak();
+    chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours }).catch(() => {});
+    sendResponse({ ok: true, fastMode });
+  } else if (message.type === "DEV_SIMULATE_VIOLATION") {
+    const now = Date.now();
+    gamificationState.lastViolation = now;
+    chrome.storage.local.set({ lastViolation: now }).then(() => {
+      updateSafeStreak();
+      chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours, violation: true }).catch(() => {});
+      sendResponse({ ok: true });
+    });
+    return true;
+  } else if (message.type === "DEV_ADD_SAFE_TIME") {
+    const hours = message.hours || 1;
+    chrome.storage.local.get(["browserStartTime", "lastViolation"]).then(({ browserStartTime, lastViolation }) => {
+      const timeUnitMs = fastMode ? (1000 * 60) : (1000 * 60 * 60);
+      const delta = hours * timeUnitMs;
+      if (lastViolation && (!browserStartTime || lastViolation > browserStartTime)) {
+        const newViolation = lastViolation - delta;
+        chrome.storage.local.set({ lastViolation: newViolation }).then(() => {
+          updateSafeStreak();
+          chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours }).catch(() => {});
+          sendResponse({ ok: true });
+        });
+      } else {
+        const base = browserStartTime || Date.now();
+        const newStart = base - delta;
+        chrome.storage.local.set({ browserStartTime: newStart }).then(() => {
+          updateSafeStreak();
+          chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours }).catch(() => {});
+          sendResponse({ ok: true });
+        });
+      }
+    });
+    return true; // async
+  } else if (message.type === "DEV_FETCH_RISK") {
+    fetchRiskScore().then(() => sendResponse({ ok: true, score: gamificationState.riskScore })).catch(() => sendResponse({ ok: false }));
+    return true;
   }
 });

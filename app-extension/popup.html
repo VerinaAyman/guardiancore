@@ -77,6 +77,12 @@
       .compliant-msg{margin-top:10px;padding:8px;background:rgba(52,211,153,0.1);border-radius:8px;font-size:11px;color:#6ee7b7;text-align:center;}
       .time-nudge{margin-top:10px;padding:8px;background:rgba(245,158,11,0.15);border-radius:8px;font-size:11px;color:#fbbf24;text-align:center;}
       .message-warning{background:rgba(239,68,68,0.15) !important;color:#fca5a5 !important;}
+  /* Dev/Test Tools */
+  .risk-breakdown{margin-top:8px;font-size:10.5px;line-height:1.4;color:#6ee7b7;background:rgba(255,255,255,0.05);padding:6px 8px;border-radius:8px;white-space:pre-line;}
+  .dev-tools-grid{display:flex;flex-direction:column;gap:8px;}
+  .dev-inline-row{display:flex;gap:6px;}
+  .flex1{flex:1;}
+  .dev-status{font-size:10px;}
       footer{margin-top:4px;padding:6px 0 10px;text-align:center;font-size:10px;color:#475569;letter-spacing:.08em;} 
       footer span{color:#64748b;}
       @media (prefers-color-scheme: light){body{background:#f1f5f9;color:#0f172a;} .header{background:var(--gc-gradient);} .tab{background:#ffffff;color:#475569;} .section{background:#ffffff;border-color:#e2e8f0;} .badge{background:#e2e8f0;color:#475569;} }
@@ -109,6 +115,7 @@
             <span class="stat-label">Risk Score</span>
             <span class="stat-value risk-low" id="risk-score-value">0</span>
           </div>
+          <div id="risk-breakdown" class="hidden risk-breakdown"></div>
           <div id="compliant-message" class="hidden compliant-msg">
             Great job! Keep up the safe browsing.
           </div>
@@ -188,6 +195,21 @@
         <div class="section">
           <h3 class="section-title">Actions</h3>
           <button id="refresh-rules" class="secondary">Refresh Rules</button>
+        </div>
+
+        <!-- Dev/Test Tools (hidden unless unlocked) -->
+        <div class="section hidden" id="dev-tools">
+          <h3 class="section-title">Dev/Test Tools</h3>
+          <div class="dev-tools-grid">
+            <button id="dev-toggle-fast" class="secondary">Enable Fast Mode</button>
+            <button id="dev-violation" class="secondary">Simulate Violation</button>
+            <div class="dev-inline-row">
+              <input type="number" id="dev-add-hours" min="1" value="1" class="flex1" placeholder="Hours" />
+              <button id="dev-add-safe" class="secondary flex1">Add Safe Hours</button>
+            </div>
+            <button id="dev-risk-refresh" class="secondary">Refresh Risk Now</button>
+            <div id="dev-status" class="status hidden dev-status"></div>
+          </div>
         </div>
       </div>
     </div>
