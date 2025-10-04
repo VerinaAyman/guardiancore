@@ -47,7 +47,7 @@ document.addEventListener("DOMContentLoaded", () => {
   // Initialize
   console.log("[Popup] Starting initialization...");
   // Load gamification state first (child-facing)
-  loadGamificationState().catch(e => console.error("[Popup] loadGamification error:", e));
+  // Legacy gamification (streak/risk) removed – XP only now
   // We still load settings to display current configuration but make inputs read-only
   loadSettings().catch(e => console.error("[Popup] loadSettings error:", e));
   loadCurrentTab().catch(e => console.error("[Popup] loadCurrentTab error:", e));
@@ -106,93 +106,13 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // Load gamification state (child-facing cues)
-async function loadGamificationState() {
-  try {
-    chrome.runtime.sendMessage({ type: "GET_GAMIFICATION_STATE" }, (state) => {
-      if (!state) return;
-      
-      // Update safe streak display
-      const streakEl = document.getElementById("safe-streak-hours");
-      if (streakEl) {
-        streakEl.textContent = state.safeStreakHours || 0;
-      }
-      
-      // Update risk score display
-      const riskEl = document.getElementById("risk-score-value");
-      if (riskEl) {
-        riskEl.textContent = state.riskScore || 0;
-        
-        // Color code risk score
-        const scoreNum = state.riskScore || 0;
-        if (scoreNum < 30) {
-          riskEl.className = "risk-low";
-        } else if (scoreNum < 70) {
-          riskEl.className = "risk-medium";
-        } else {
-          riskEl.className = "risk-high";
-        }
-      }
-      
-      // Show compliant message if streak is good
-      const messageEl = document.getElementById("compliant-message");
-      if (messageEl && state.safeStreakHours >= 12) {
-        messageEl.textContent = strings.compliant_message;
-        messageEl.classList.remove("hidden");
-      }
-    });
-    
-    // Check for time-left nudges
-    chrome.runtime.sendMessage({ type: "CHECK_TIME_NUDGE" });
-  } catch (e) {
-    console.error("[Gamification] Load error:", e);
-  }
-}
+// Removed loadGamificationState (legacy)
 
 // Handle real-time messages from background
 function handleBackgroundMessage(message, sender, sendResponse) {
   console.log("[Popup] Message received:", message.type);
   
-  if (message.type === "risk:update") {
-    const riskEl = document.getElementById("risk-score-value");
-    if (riskEl) {
-      riskEl.textContent = message.score || 0;
-    }
-    // Show breakdown
-    const breakdownEl = document.getElementById("risk-breakdown");
-    if (breakdownEl && message.breakdown) {
-      breakdownEl.textContent = formatRiskBreakdown(message.breakdown);
-      if (breakdownEl.classList.contains("hidden")) {
-        // Keep hidden unless dev tools enabled; it will be toggled there
-      }
-    }
-  } else if (message.type === "nudge:streak") {
-    const streakEl = document.getElementById("safe-streak-hours");
-    if (streakEl) {
-      streakEl.textContent = message.hours || 0;
-    }
-    
-    if (message.violation) {
-      // Show violation notification
-      const messageEl = document.getElementById("compliant-message");
-      if (messageEl) {
-        messageEl.textContent = "Safe streak reset due to violation";
-        messageEl.className = "message-warning";
-        messageEl.classList.remove("hidden");
-      }
-    }
-  } else if (message.type === "nudge:timeleft") {
-    // Show time-left nudge
-    const nudgeEl = document.getElementById("time-nudge");
-    if (nudgeEl) {
-      nudgeEl.textContent = `Time restriction starts in ${message.minutes} minutes`;
-      nudgeEl.classList.remove("hidden");
-      
-      // Auto-hide after 10 seconds
-      setTimeout(() => {
-        nudgeEl.classList.add("hidden");
-      }, 10000);
-    }
-  } else if (message.type === "stats:update") {
+  if (message.type === "stats:update") {
     updateStatsDisplay(message.stats);
   } else if (message.type === "xp:update") {
     updateXpDisplay(message);
@@ -238,10 +158,10 @@ function attachDevToolsHandlers() {
   const fastBtn = document.getElementById('dev-toggle-fast');
   const vioBtn = document.getElementById('dev-violation');
   const addBtn = document.getElementById('dev-add-safe');
-  const riskBtn = document.getElementById('dev-risk-refresh');
+  // Removed risk refresh & streak manipulation controls
   // Optionally add a reset XP button if dev tools present in future
   const statusEl = document.getElementById('dev-status');
-  const addHoursInput = document.getElementById('dev-add-hours');
+  
 
   function setStatus(msg, cls='status-info') {
     if (!statusEl) return;
@@ -261,22 +181,8 @@ function attachDevToolsHandlers() {
 
   if (vioBtn) vioBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'DEV_SIMULATE_VIOLATION' }, () => {
-      setStatus('Simulated violation', 'status-warning');
-      loadGamificationState();
-    });
-  });
-
-  if (addBtn) addBtn.addEventListener('click', () => {
-    const hours = parseInt(addHoursInput.value || '1', 10) || 1;
-    chrome.runtime.sendMessage({ type: 'DEV_ADD_SAFE_TIME', hours }, () => {
-      setStatus(`Added ${hours} safe hour(s)`);
-      loadGamificationState();
-    });
-  });
-
-  if (riskBtn) riskBtn.addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type: 'DEV_FETCH_RISK' }, (res) => {
-      if (res?.ok) setStatus(`Risk refreshed: ${res.score}`); else setStatus('Risk refresh failed', 'status-error');
+      setStatus('Simulated violation (XP penalty applied)', 'status-warning');
+      requestXpState();
     });
   });
 }
@@ -291,18 +197,17 @@ function updateXpDisplay(state) {
   const xpVal = document.getElementById('xp-value');
   const lvlEl = document.getElementById('xp-level');
   const bar = document.getElementById('xp-bar-fill');
+  const remainingEl = document.getElementById('xp-remaining');
   if (xpVal) xpVal.textContent = state.xp ?? 0;
   if (lvlEl) lvlEl.textContent = state.level ?? 1;
   if (bar) bar.style.width = `${Math.min(100, Math.round((state.progress || 0)*100))}%`;
+  if (remainingEl) {
+    const remaining = 100 - (state.xp ?? 0);
+    remainingEl.textContent = `${remaining} XP to next level`;
+  }
 }
 
-function formatRiskBreakdown(breakdown) {
-  try {
-    if (typeof breakdown === 'string') return breakdown;
-    if (Array.isArray(breakdown)) return breakdown.map(kv => `${kv.key || kv.name}: ${kv.value || kv.score || kv.count}` ).join('\n');
-    return Object.entries(breakdown).map(([k,v]) => `${k}: ${v}`).join('\n');
-  } catch { return ''; }
-}
+// Risk breakdown removed
 
 async function loadSettings() {
   const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(["gc_backend_url", "gc_api_token"]);

@@ -42,15 +42,8 @@ const TRACKERS = {
 // In-memory per-tab state
 const tabState = new Map(); // tabId -> { trackerCount, trackersByCategory, lastCsp, lastCors, blocked }
 
-// Gamification state (local only)
-let gamificationState = {
-  lastViolation: null,      // Timestamp of last blocked event
-  safeStreakHours: 0,       // Derived display value
-  riskScore: 0,
-  lastRiskUpdate: 0,
-  activeAccumulatedMs: 0,   // Tracked active browsing milliseconds since lastViolation (or start)
-  lastActivityTs: null      // Last timestamp we considered user active
-};
+// Legacy streak/risk state removed – XP only retained; keep violation timestamp for XP penalties if needed
+let lastViolationTs = null;
 
 // XP (fast-feedback gamification) state (daily reset)
 let xpState = {
@@ -288,20 +281,13 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   const enforcement = enforceRules(details.url, details.tabId);
   if (enforcement.blocked) {
     // Track violation for gamification
-    gamificationState.lastViolation = Date.now();
-    gamificationState.safeStreakHours = 0;
-    gamificationState.activeAccumulatedMs = 0; // reset active time
-    await chrome.storage.local.set({ lastViolation: gamificationState.lastViolation, gc_active_ms: 0 });
+  lastViolationTs = Date.now();
+  await chrome.storage.local.set({ lastViolation: lastViolationTs });
 
     // Award negative XP immediately
     awardXp({ trackers: 0, csp: false, cors: false, blocked: true, violation: true });
     
-    // Notify UIs about streak reset
-    chrome.runtime.sendMessage({
-      type: "nudge:streak",
-      hours: 0,
-      violation: true
-    }).catch(() => {});
+    // (Streak UI removed) – no broadcast
     
     // Redirect to blocking page with explanation
     const blockUrl = chrome.runtime.getURL("blocked.html") + 
@@ -310,8 +296,7 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     chrome.tabs.update(details.tabId, { url: blockUrl });
   } else {
     // Count navigation as activity
-    markUserActive();
-    updateSafeStreak();
+  // Activity accumulation removed
   }
 });
 
@@ -323,8 +308,7 @@ chrome.webNavigation.onCompleted.addListener(async (nav) => {
     if (!tab?.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return;
 
     // Mark activity on successful load
-    markUserActive();
-    updateSafeStreak();
+  // Legacy streak tracking removed
 
     const origin = new URL(tab.url).origin;
     const originHash = await sha256Hex(origin);
@@ -381,35 +365,6 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 // Fetch risk score from backend
-async function fetchRiskScore() {
-  try {
-    const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(["gc_backend_url", "gc_api_token"]);
-    if (!gc_backend_url) return;
-
-    const url = `${gc_backend_url.replace(/\/+$/, "")}/risk/score`;
-    const response = await fetch(url, {
-      headers: {
-        "Authorization": gc_api_token ? `Bearer ${gc_api_token}` : ""
-      }
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      gamificationState.riskScore = data.score;
-      gamificationState.lastRiskUpdate = Date.now();
-      console.log("Risk score updated:", data.score);
-      
-      // Notify UIs
-      chrome.runtime.sendMessage({
-        type: "risk:update",
-        score: data.score,
-        breakdown: data.inputs_breakdown
-      }).catch(() => {}); // Ignore if no listeners
-    }
-  } catch (e) {
-    console.error("Failed to fetch risk score:", e);
-  }
-}
 
 // Fetch audit stats
 async function fetchStats() {
@@ -440,122 +395,22 @@ async function fetchStats() {
 }
 
 // Update safe streak calculation - tracks active browsing time
-function updateSafeStreak() {
-  chrome.storage.local.get(["browserStartTime", "lastViolation", "gc_active_ms"]).then(({ browserStartTime, lastViolation, gc_active_ms }) => {
-    const now = Date.now();
-    if (!browserStartTime) {
-      browserStartTime = now;
-      chrome.storage.local.set({ browserStartTime });
-    }
-
-    if (gc_active_ms && !gamificationState.activeAccumulatedMs) {
-      gamificationState.activeAccumulatedMs = gc_active_ms; // restore persisted
-    }
-
-    // Rebase accumulated time if violation happened
-    if (lastViolation) {
-      gamificationState.lastViolation = lastViolation;
-      // If violation after last activity accumulation, and we previously counted time before violation, reset
-      if (lastViolation > browserStartTime) {
-        // Keep only active time since violation
-        // If lastViolation > now (clock changed) clamp
-        if (gamificationState.lastActivityTs && gamificationState.lastActivityTs < lastViolation) {
-          gamificationState.activeAccumulatedMs = 0;
-        }
-      }
-    }
-
-    const timeUnitMs = fastMode ? (1000 * 60) : (1000 * 60 * 60); // minute or hour units
-    gamificationState.safeStreakHours = Math.min(Math.floor(gamificationState.activeAccumulatedMs / timeUnitMs), 999);
-  });
-}
 
 // Track activity: consider navigation complete, focused window, or periodic ticks as activity
-function markUserActive() {
-  const now = Date.now();
-  if (!gamificationState.lastActivityTs) {
-    gamificationState.lastActivityTs = now;
-    return;
-  }
-  const delta = now - gamificationState.lastActivityTs;
-  // If delta reasonable (<15 min inactivity gap), accumulate
-  if (delta < 15 * 60 * 1000) {
-    gamificationState.activeAccumulatedMs += delta;
-  }
-  gamificationState.lastActivityTs = now;
-  chrome.storage.local.set({ gc_active_ms: gamificationState.activeAccumulatedMs });
-}
 
-// Periodic heartbeat to accumulate time even if page static
-const heartbeatIntervalMsBase = 5 * 60 * 1000; // 5 mins real mode
-let heartbeatTimer = null;
-function startHeartbeat() {
-  if (heartbeatTimer) clearInterval(heartbeatTimer);
-  const interval = fastMode ? 10 * 1000 : heartbeatIntervalMsBase; // 10s in fast mode
-  heartbeatTimer = setInterval(() => {
-    markUserActive();
-    updateSafeStreak();
-    chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours }).catch(() => {});
-  }, interval);
-}
-
-function calculateStreak() {
-  updateSafeStreak();
-}
-
-// Check for time-left nudges
-function checkTimeLeftNudges() {
-  const timeCheck = isInBlockedTimeWindow();
-  if (!timeCheck.blocked) {
-    // Not in a time window - check if one is coming soon
-    const now = new Date();
-    const currentHour = now.getHours();
-    const currentMinute = now.getMinutes();
-    
-    for (const rule of rulesCache.time_window) {
-      try {
-        const config = JSON.parse(rule.pattern);
-        const startHour = config.start_hour || 0;
-        
-        // Check if we're within 15 minutes of window start
-        const minutesUntilStart = (startHour * 60) - (currentHour * 60 + currentMinute);
-        
-        if (minutesUntilStart > 0 && minutesUntilStart <= 15) {
-          // Send nudge
-          chrome.runtime.sendMessage({
-            type: "nudge:timeleft",
-            minutes: minutesUntilStart,
-            rule: rule
-          }).catch(() => {});
-          
-          break;
-        }
-      } catch (e) {
-        // Ignore malformed rules
-      }
-    }
-  }
-}
+// Heartbeat, streak calculation, and time-left nudges removed (XP-only system)
 
 // Periodic background updates (debounced polling)
 let updateTimer = null;
-function scheduleBackgroundUpdate() {
+async function scheduleBackgroundUpdate() {
   if (updateTimer) return; // Already scheduled
-  
   updateTimer = setTimeout(async () => {
     await Promise.all([
       fetchRules(),
-      fetchRiskScore(),
       fetchStats()
     ]);
     
-    updateSafeStreak();
-    
-    // Notify UIs about streak update
-    chrome.runtime.sendMessage({
-      type: "nudge:streak",
-      hours: gamificationState.safeStreakHours
-    }).catch(() => {});
+    // No streak/risk broadcast
     
     updateTimer = null;
     
@@ -570,18 +425,14 @@ chrome.runtime.onInstalled.addListener(() => {
   loadFastMode();
   loadXpState();
   fetchRules();
-  updateSafeStreak();
   scheduleBackgroundUpdate();
-  startHeartbeat();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   loadFastMode();
   loadXpState();
   fetchRules();
-  updateSafeStreak();
   scheduleBackgroundUpdate();
-  startHeartbeat();
 });
 
 // When popup opens, trigger immediate refresh
@@ -599,57 +450,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === "REFRESH_RULES") {
     fetchRules().then(() => sendResponse({ ok: true }));
     return true; // Async response
-  } else if (message.type === "GET_GAMIFICATION_STATE") {
-    updateSafeStreak();
-    sendResponse({
-      safeStreakHours: gamificationState.safeStreakHours,
-      riskScore: gamificationState.riskScore,
-      lastUpdate: gamificationState.lastRiskUpdate
-    });
   } else if (message.type === "CHECK_TIME_NUDGE") {
-    checkTimeLeftNudges();
-    sendResponse({ ok: true });
+    sendResponse({ ok: true }); // deprecated
   // --- Dev/Test message handlers ---
   } else if (message.type === "DEV_TOGGLE_FAST_MODE") {
     fastMode = !fastMode;
     chrome.storage.local.set({ gc_fast_mode: fastMode });
-    updateSafeStreak();
-    chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours }).catch(() => {});
     sendResponse({ ok: true, fastMode });
   } else if (message.type === "DEV_SIMULATE_VIOLATION") {
-    const now = Date.now();
-    gamificationState.lastViolation = now;
-    chrome.storage.local.set({ lastViolation: now }).then(() => {
-      updateSafeStreak();
-      chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours, violation: true }).catch(() => {});
-      sendResponse({ ok: true });
-    });
-    return true;
-  } else if (message.type === "DEV_ADD_SAFE_TIME") {
-    const hours = message.hours || 1;
-    chrome.storage.local.get(["browserStartTime", "lastViolation"]).then(({ browserStartTime, lastViolation }) => {
-      const timeUnitMs = fastMode ? (1000 * 60) : (1000 * 60 * 60);
-      const delta = hours * timeUnitMs;
-      if (lastViolation && (!browserStartTime || lastViolation > browserStartTime)) {
-        const newViolation = lastViolation - delta;
-        chrome.storage.local.set({ lastViolation: newViolation }).then(() => {
-          updateSafeStreak();
-          chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours }).catch(() => {});
-          sendResponse({ ok: true });
-        });
-      } else {
-        const base = browserStartTime || Date.now();
-        const newStart = base - delta;
-        chrome.storage.local.set({ browserStartTime: newStart }).then(() => {
-          updateSafeStreak();
-          chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours }).catch(() => {});
-          sendResponse({ ok: true });
-        });
-      }
-    });
-    return true; // async
-  } else if (message.type === "DEV_FETCH_RISK") {
-    fetchRiskScore().then(() => sendResponse({ ok: true, score: gamificationState.riskScore })).catch(() => sendResponse({ ok: false }));
+    lastViolationTs = Date.now();
+    chrome.storage.local.set({ lastViolation: lastViolationTs }).then(() => sendResponse({ ok: true }));
     return true;
   } else if (message.type === "GET_XP_STATE") {
     ensureXpDay();

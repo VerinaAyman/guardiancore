@@ -106,15 +106,7 @@
         <!-- Gamification Cues (Week 4) -->
         <div class="section gamification-section">
           <h3 class="section-title gamification-title">🎯 Your Activity</h3>
-          <div class="stat-row">
-            <span class="stat-label">Safe Streak</span>
-            <span class="stat-value safe-streak-value" id="safe-streak-hours">0</span>
-            <span class="streak-label">hours</span>
-          </div>
-          <div class="stat-row">
-            <span class="stat-label">Risk Score</span>
-            <span class="stat-value risk-low" id="risk-score-value">0</span>
-          </div>
+          <!-- Legacy Safe Streak & Risk Score removed: XP is now the sole gamification metric -->
           <div class="stat-row">
             <span class="stat-label">Level</span>
             <span class="stat-value" id="xp-level">1</span>
@@ -126,12 +118,7 @@
           <div id="xp-bar" style="height:6px;border-radius:4px;background:#1e293b;overflow:hidden;margin-top:6px;">
             <div id="xp-bar-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#8b5cf6);transition:width .3s ease;"></div>
           </div>
-          <div id="risk-breakdown" class="hidden risk-breakdown"></div>
-          <div id="compliant-message" class="hidden compliant-msg">
-            Great job! Keep up the safe browsing.
-          </div>
-          <div id="time-nudge" class="hidden time-nudge">
-          </div>
+          <div id="xp-remaining" style="margin-top:6px;font-size:11px;color:#94a3b8;text-align:center;">100 XP to next level</div>
         </div>
         
         <div id="blocked-banner" class="blocked-banner hidden">
@@ -213,12 +200,7 @@
           <h3 class="section-title">Dev/Test Tools</h3>
           <div class="dev-tools-grid">
             <button id="dev-toggle-fast" class="secondary">Enable Fast Mode</button>
-            <button id="dev-violation" class="secondary">Simulate Violation</button>
-            <div class="dev-inline-row">
-              <input type="number" id="dev-add-hours" min="1" value="1" class="flex1" placeholder="Hours" />
-              <button id="dev-add-safe" class="secondary flex1">Add Safe Hours</button>
-            </div>
-            <button id="dev-risk-refresh" class="secondary">Refresh Risk Now</button>
+            <button id="dev-violation" class="secondary">Simulate Violation (XP Penalty)</button>
             <div id="dev-status" class="status hidden dev-status"></div>
           </div>
         </div>
