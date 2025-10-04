@@ -297,7 +297,8 @@ async function loadRules() {
   }
   
   try {
-    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/?enabled_only=true`, {
+    // Fetch ALL rules so that disabling doesn't make them disappear (user thought it was deleting)
+    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/?enabled_only=false`, {
       headers: {
         "Authorization": `Bearer ${gc_api_token}`
       }
@@ -375,13 +376,13 @@ function attachRuleActionHandlers() {
   document.querySelectorAll('.rule-delete-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = parseInt(btn.dataset.ruleId, 10);
-      if (!confirm('Delete this rule?')) return;
+      // Single confirmation handled inside deleteRule() already
       btn.disabled = true;
       btn.textContent = '...';
       try {
         await deleteRule(id);
       } finally {
-        // loadRules will refresh UI
+        // UI refreshed by loadRules inside deleteRule
       }
     });
   });
@@ -473,8 +474,6 @@ async function toggleRule(ruleId, enable) {
 }
 
 async function deleteRule(ruleId) {
-  if (!confirm("Delete this rule?")) return;
-  
   const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
     "gc_backend_url",
     "gc_api_token"
