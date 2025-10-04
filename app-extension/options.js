@@ -39,7 +39,6 @@ function showMainContent() {
   
   loadSettings();
   loadRules();
-  loadRecoveryStatus();
 }
 
 function showStatus(elementId, message, type) {
@@ -93,11 +92,6 @@ function setupTabs() {
       document.querySelectorAll(".tab-content").forEach(c => c.style.display = "none");
       const content = document.getElementById(`${targetTab}-tab`);
       if (content) content.style.display = "block";
-
-      // Refresh recovery status each time user opens that tab (after unlock)
-      if (isUnlocked && targetTab === 'recovery') {
-        loadRecoveryStatus();
-      }
     });
   });
 }
@@ -241,6 +235,40 @@ function setupButtonHandlers() {
   
   // Add rule
   document.getElementById("add-rule-btn")?.addEventListener("click", addRule);
+
+  // Rule type toggle show/hide inputs
+  const ruleTypeSelect = document.getElementById("rule-type");
+  const domainGroup = document.getElementById("domain-input-group");
+  const timeGroup = document.getElementById("time-input-group");
+  if (ruleTypeSelect) {
+    ruleTypeSelect.addEventListener("change", () => {
+      if (ruleTypeSelect.value === "time_window") {
+        // Show both: domain (optional) + time window config
+        domainGroup.classList.remove("hidden");
+        timeGroup.classList.remove("hidden");
+        domainGroup.querySelector('label').textContent = 'Domain Pattern (optional for global)';
+      } else {
+        domainGroup.classList.remove("hidden");
+        timeGroup.classList.add("hidden");
+        domainGroup.querySelector('label').textContent = 'Domain Pattern';
+      }
+    });
+  }
+
+  // Day buttons selection logic
+  document.querySelectorAll('.day-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const day = parseInt(btn.dataset.day, 10);
+      if (btn.classList.contains('selected')) {
+        btn.classList.remove('selected');
+        selectedDays = selectedDays.filter(d => d !== day);
+      } else {
+        btn.classList.add('selected');
+        if (!selectedDays.includes(day)) selectedDays.push(day);
+        selectedDays.sort((a,b)=>a-b);
+      }
+    });
+  });
   
   // Change PIN
   document.getElementById("change-pin-btn")?.addEventListener("click", changePIN);
@@ -286,6 +314,12 @@ async function saveSettings() {
   });
   
   showStatus("backend-status", "✅ Settings saved successfully", "success");
+  
+  // Auto-load rules immediately after config save
+  await loadRules();
+  
+  // Notify background to fetch rules with new config
+  chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
 }
 
 async function loadSettings() {
@@ -340,6 +374,19 @@ async function loadRules() {
       const pattern = rule.rule_type === "time_window" ? 
         formatTimeWindow(rule.pattern) : 
         rule.pattern;
+      // Created timestamp & scope descriptor
+      let createdStr = '';
+      try {
+        if (rule.created_at) {
+          const raw = typeof rule.created_at === 'string' ? rule.created_at : (rule.created_at.toString());
+          const d = new Date(raw);
+          // Use local date/time short format
+          if (!isNaN(d.getTime())) {
+            createdStr = d.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+          }
+        }
+      } catch { /* ignore */ }
+      const scopeStr = rule.rule_type === 'time_window' ? 'Window' : '24h';
       
       return `
         <div class="rule-card" data-rule-id="${rule.id}">
@@ -350,6 +397,10 @@ async function loadRules() {
                 <span class="badge ${badgeClass}">${rule.rule_type}</span>
                 ${enabledBadge}
                 ${rule.category ? `<span class=\"badge\">${rule.category}</span>` : ''}
+              </div>
+              <div class="rule-timestamp" style="margin-top:4px;color:var(--gc-text-dim);font-size:12px;">
+                <span>${scopeStr}</span>
+                ${createdStr ? ` • <span>Created ${createdStr}</span>` : ''}
               </div>
             </div>
             <div class="rule-actions">
@@ -408,8 +459,10 @@ function formatTimeWindow(pattern) {
     const config = JSON.parse(pattern);
     const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
     const days = config.days || [];
-    const daysStr = days.length === 7 ? "Every day" : days.map(d => dayNames[d]).join(", ");
-    return `${config.start_hour}:00-${config.end_hour}:00 (${daysStr})`;
+    const daysStr = days.length === 7 ? 'All Days' : days.map(d => dayNames[d]).join(', ');
+    const domainPart = config.domain ? `${config.domain} ` : '';
+    const actionPart = config.action === 'allow' ? '[ALLOW window]' : '[BLOCK window]';
+    return `${domainPart}${config.start_hour}:00-${config.end_hour}:00 ${actionPart} (${daysStr})`;
   } catch {
     return pattern;
   }
@@ -417,11 +470,36 @@ function formatTimeWindow(pattern) {
 
 async function addRule() {
   const ruleType = document.getElementById("rule-type").value;
-  const pattern = document.getElementById("rule-pattern").value.trim();
-  
-  if (!pattern) {
-    showStatus("add-rule-status", "Pattern is required", "error");
+  let pattern = document.getElementById("rule-pattern").value.trim();
+
+  // Explanation mandatory for all rule types now
+  const explanationInput = document.getElementById("rule-explanation");
+  const explanation = explanationInput ? explanationInput.value.trim() : '';
+  if (!explanation) {
+    showStatus("add-rule-status", "Reason is required", "error");
     return;
+  }
+
+  if (ruleType === 'time_window') {
+    const startHour = parseInt(document.getElementById('start-hour').value, 10);
+    const endHour = parseInt(document.getElementById('end-hour').value, 10);
+    if (isNaN(startHour) || isNaN(endHour) || startHour < 0 || startHour > 23 || endHour < 0 || endHour > 23) {
+      showStatus("add-rule-status", "Start and End hours must be 0-23", "error");
+      return;
+    }
+    if (!selectedDays.length) {
+      showStatus("add-rule-status", "Select at least one day", "error");
+      return;
+    }
+    const actionSelect = document.getElementById('time-window-action');
+    const action = actionSelect ? actionSelect.value : 'block';
+    const domainInputVal = document.getElementById('rule-pattern').value.trim();
+    pattern = JSON.stringify({ start_hour: startHour, end_hour: endHour, days: selectedDays, action, domain: domainInputVal || null });
+  } else {
+    if (!pattern) {
+      showStatus("add-rule-status", "Domain pattern is required", "error");
+      return;
+    }
   }
   
   const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
@@ -434,6 +512,9 @@ async function addRule() {
     return;
   }
   
+  const category = document.getElementById("rule-category").value.trim();
+  // explanation already captured above
+  
   try {
     const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/`, {
       method: "POST",
@@ -444,7 +525,8 @@ async function addRule() {
       body: JSON.stringify({
         rule_type: ruleType,
         pattern: pattern,
-  explanation: null,
+        category: category || null,
+  explanation: explanation,
         enabled: true
       })
     });
@@ -453,7 +535,8 @@ async function addRule() {
     
     showStatus("add-rule-status", "✅ Rule created successfully", "success");
     document.getElementById("rule-pattern").value = "";
-  // Explanation field removed
+    document.getElementById("rule-category").value = "";
+  if (explanationInput) explanationInput.value = "";
     loadRules();
   } catch (e) {
     console.error("Failed to add rule:", e);
@@ -541,59 +624,13 @@ async function changePIN() {
 }
 
 async function loadRecoveryStatus() {
-  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
+  // Simple status message - codes are only shown once during generation
   const statusDiv = document.getElementById("recovery-status");
-  
-  if (recovery_batches.length === 0) {
-    statusDiv.innerHTML = '<div class="empty-state">No recovery codes generated</div>';
-    return;
-  }
-  
-  const activeBatch = recovery_batches.find(b => b.active);
-  if (!activeBatch) {
-    statusDiv.innerHTML = '<div class="empty-state">No active recovery codes</div>';
-    return;
-  }
-  
-  const usedCount = activeBatch.codes.filter(c => c.used).length;
-  const unusedCount = activeBatch.codes.length - usedCount;
-
-  // Build table of codes (masked except last 4). Plaintext not stored after generation.
-  const rows = activeBatch.codes.map((c, idx) => {
-    const masked = `****-****-${c.hash.slice(-4)}`; // show last 4 of hash as identifier
-    const status = c.used ? 'Used' : 'Unused';
-    const statusColor = c.used ? 'var(--gc-warn)' : 'var(--gc-success)';
-    const usedAt = c.used_at ? new Date(c.used_at).toLocaleString() : '';
-    return `<tr>
-      <td style="padding:6px 8px;font-family:monospace;font-size:12px;">${idx+1}</td>
-      <td style="padding:6px 8px;font-family:monospace;font-size:12px;">${masked}</td>
-      <td style="padding:6px 8px;color:${statusColor};font-size:12px;">${status}</td>
-      <td style="padding:6px 8px;font-size:12px;color:var(--gc-text-dim);">${usedAt}</td>
-    </tr>`;
-  }).join("");
-
   statusDiv.innerHTML = `
     <div class="panel">
-      <p style="margin-bottom:8px;"><strong>Batch:</strong> ${activeBatch.id.substring(0, 8)}… <strong>Created:</strong> ${new Date(activeBatch.created_at).toLocaleString()}</p>
-      <p style="margin-bottom:12px;">
-        <strong>Usage:</strong> ${unusedCount} unused / ${usedCount} used (total ${activeBatch.codes.length})
+      <p style="color:var(--gc-text-dim);line-height:1.6;">
+        Recovery codes are only displayed once during generation. Use the button below to generate new codes if needed.
       </p>
-      <div style="overflow-x:auto;">
-        <table style="width:100%;border-collapse:collapse;font-size:12px;">
-          <thead>
-            <tr style="text-align:left;background:#0f1a27;">
-              <th style="padding:6px 8px;font-weight:600;">#</th>
-              <th style="padding:6px 8px;font-weight:600;">Identifier</th>
-              <th style="padding:6px 8px;font-weight:600;">Status</th>
-              <th style="padding:6px 8px;font-weight:600;">Used At</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${rows}
-          </tbody>
-        </table>
-      </div>
-      <p style="margin-top:10px;font-size:11px;color:var(--gc-text-dim);">Original plaintext codes are only visible at generation time. Masked identifiers let you audit usage without exposing secrets.</p>
     </div>
   `;
 }
@@ -647,7 +684,6 @@ Store this file offline in a secure location.
   }, () => {
     URL.revokeObjectURL(url);
     alert(`✅ Recovery codes generated and downloaded!\n\nFile: ${filename}\n\nKeep this file safe and offline.`);
-    loadRecoveryStatus();
   });
 }
 

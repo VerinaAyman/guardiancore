@@ -196,6 +196,14 @@
                 <button type="button" class="day-btn selected" data-day="5">Fri</button>
                 <button type="button" class="day-btn selected" data-day="6">Sat</button>
               </div>
+              <div class="form-group" style="margin-top:16px;">
+                <label>Window Mode</label>
+                <select id="time-window-action">
+                  <option value="block" selected>Block during this window (domain/global)</option>
+                  <option value="allow">Allow only during this window (outside blocked)</option>
+                </select>
+                <small class="note">If domain field is left empty, a block window applies to all non-allowlisted sites.</small>
+              </div>
             </div>
 
             <div class="form-group">
@@ -203,7 +211,11 @@
               <input type="text" id="rule-category" placeholder="e.g., social_media, education, gaming">
             </div>
 
-            <!-- Explanation removed for security -->
+            <div class="form-group">
+              <label>Reason <span style="color:var(--gc-accent);font-weight:600;">*</span></label>
+              <input type="text" id="rule-explanation" placeholder="Required – why is this rule needed?">
+              <small class="note">This is required and helps explain or remember the purpose of the rule.</small>
+            </div>
 
             <button id="add-rule-btn">Add Rule</button>
             <div id="add-rule-status" class="status hidden"></div>
@@ -243,13 +255,10 @@
             <h3 class="section-title">🔑 Recovery Codes</h3>
             <div class="info-box">
               Recovery codes allow you to reset your PIN if you forget it. Each code can only be used once.
-              Store them securely offline.
+              Store them securely offline. Codes are only shown once during generation.
             </div>
-            <div id="recovery-status" class="mb-16">
-              <div class="empty-state">Recovery codes status will appear here after unlocking</div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr;gap:12px;">
-              <button id="regenerate-codes-btn" class="danger">Regenerate Codes</button>
+            <div style="margin:24px 0;">
+              <button id="regenerate-codes-btn" class="danger">Generate New Recovery Codes</button>
             </div>
             <div id="recovery-status-msg" class="status hidden"></div>
           </div>
@@ -286,16 +295,27 @@
           <div class="section">
             <h3 class="section-title">ℹ️ About GuardianCore</h3>
             <div class="panel">
-              <p style="margin-bottom:12px;"><strong>Version:</strong> 0.4.0 (Week 4)</p>
-              <p style="margin-bottom:12px;"><strong>Features:</strong></p>
+              <p style="margin-bottom:12px;"><strong>Version:</strong> 0.4.4 (XP Balance Update)</p>
+              <p style="margin-bottom:12px;"><strong>Release Date:</strong> October 4, 2025</p>
+              <p style="margin-bottom:18px;"><strong>Features:</strong></p>
               <ul style="margin-left:20px;color:var(--gc-text-dim);line-height:1.8;">
                 <li>Privacy-focused audit monitoring</li>
                 <li>Parental control rules (allowlist/blocklist/time windows)</li>
-                <li>Risk scoring and gamification cues</li>
-                <li>Hardened PIN storage (PBKDF2-SHA-256)</li>
-                <li>10 recovery codes with secure hashing</li>
+                <li>XP-only gamification with instant feedback</li>
+                <li>Forgiving tracker penalties (-0.5 per tracker, max -2.5)</li>
+                <li>30-second cooldown to prevent XP farming</li>
+                <li>Hardened PIN storage (PBKDF2-SHA-256, 310k iterations)</li>
+                <li>10 recovery codes with secure hashing and usage tracking</li>
+                <li>Auto-refresh rules after backend config save</li>
                 <li>Export/import rules</li>
                 <li>GDPR-safe by design</li>
+              </ul>
+              <p style="margin-top:18px;margin-bottom:8px;"><strong>Latest Changes (v0.4.4):</strong></p>
+              <ul style="margin-left:20px;color:var(--gc-text-dim);line-height:1.8;">
+                <li>More forgiving XP system (tracker penalty reduced)</li>
+                <li>Recovery codes table shows used codes with timestamps</li>
+                <li>Blocked sites maintain -5 XP penalty</li>
+                <li>Daily XP reset with persistent levels</li>
               </ul>
             </div>
           </div>

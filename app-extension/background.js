@@ -46,6 +46,10 @@ const TRACKERS = {
 // In-memory per-tab state
 const tabState = new Map(); // tabId -> { trackerCount, trackersByCategory, lastCsp, lastCors, blocked }
 
+// XP farming prevention: track recent navigations (url -> timestamp)
+const recentNavigations = new Map(); // url -> last_awarded_timestamp
+const XP_COOLDOWN_MS = 30000; // 30 seconds cooldown per unique URL
+
 // Legacy streak/risk state removed – XP only retained; keep violation timestamp for XP penalties if needed
 let lastViolationTs = null;
 
@@ -84,9 +88,9 @@ function awardXp(event) {
   let delta = 1; // base per navigation
   if (event.csp) delta += 2;
   if (event.cors) delta += 1;
-  if (event.trackers === 0) delta += 3; else delta -= Math.min(event.trackers, 5); // penalize trackers
-  if (event.blocked || event.violation) delta -= 5; // heavy penalty
-  if (delta < 0) delta = Math.max(delta, -7); // floor penalty
+  if (event.trackers === 0) delta += 3; else delta -= Math.min(event.trackers, 5) * 0.5; // gentler tracker penalty (-0.5 per tracker, max -2.5)
+  if (event.blocked || event.violation) delta -= 5; // heavy penalty for blocked sites
+  if (delta < 0) delta = Math.max(delta, -5); // floor penalty at -5
   if (fastMode) delta *= 3; // accelerate in fast mode
   xpState.xp += delta;
   if (xpState.xp < 0) xpState.xp = 0;
@@ -173,35 +177,65 @@ function matchesPattern(url, pattern) {
 }
 
 // Check time window rules
-function isInBlockedTimeWindow() {
+function evaluateTimeWindows(url) {
   const now = new Date();
   const currentHour = now.getHours();
-  const currentDay = now.getDay(); // 0 = Sunday, 6 = Saturday
+  const currentDay = now.getDay();
+  const hostname = (()=>{ try { return new URL(url).hostname.replace(/^www\./,''); } catch { return ''; } })();
+
+  const domainAllowWindows = [];
+  const domainBlockWindows = [];
+  const globalBlockWindows = [];
 
   for (const rule of rulesCache.time_window) {
     try {
-      const config = JSON.parse(rule.pattern);
-      // Format: { start_hour: 22, end_hour: 6, days: [0,1,2,3,4,5,6] }
-      if (config.days && !config.days.includes(currentDay)) continue;
-      
-      const startHour = config.start_hour || 0;
-      const endHour = config.end_hour || 24;
-      
-      // Handle overnight windows (e.g., 22:00 to 6:00)
-      if (startHour > endHour) {
-        if (currentHour >= startHour || currentHour < endHour) {
-          return { blocked: true, rule };
+      const cfg = JSON.parse(rule.pattern);
+      if (cfg.days && !cfg.days.includes(currentDay)) continue;
+      const startHour = cfg.start_hour ?? 0;
+      const endHour = cfg.end_hour ?? 24;
+      const inWindow = startHour > endHour
+        ? (currentHour >= startHour || currentHour < endHour)
+        : (currentHour >= startHour && currentHour < endHour);
+      const action = cfg.action === 'allow' ? 'allow' : 'block';
+
+      if (cfg.domain) {
+        const matchesDomain = hostname === cfg.domain || hostname.endsWith('.' + cfg.domain);
+        if (!matchesDomain) continue; // Domain-specific rule only applies to that domain
+        if (action === 'allow') {
+          domainAllowWindows.push({ rule, inWindow });
+        } else {
+          domainBlockWindows.push({ rule, inWindow });
         }
       } else {
-        if (currentHour >= startHour && currentHour < endHour) {
-          return { blocked: true, rule };
+        // Global only meaningful for block windows
+        if (action === 'block') {
+          globalBlockWindows.push({ rule, inWindow });
         }
       }
     } catch (e) {
-      console.error("Invalid time window rule:", rule, e);
+      console.error('Invalid time window rule', rule, e);
     }
   }
-  return { blocked: false };
+
+  // Domain allow semantics
+  if (domainAllowWindows.length) {
+    if (domainAllowWindows.some(w => w.inWindow)) {
+      return { allowed: true, reason: 'Allowed (scheduled allow window)' };
+    }
+    return { blocked: true, rule: domainAllowWindows[0].rule, reason: 'Outside allowed time window' };
+  }
+
+  // Domain block semantics
+  if (domainBlockWindows.some(w => w.inWindow)) {
+    return { blocked: true, rule: domainBlockWindows.find(w => w.inWindow).rule, reason: 'Blocked during scheduled window' };
+  }
+
+  // Global block semantics
+  if (globalBlockWindows.some(w => w.inWindow)) {
+    return { blocked: true, rule: globalBlockWindows.find(w => w.inWindow).rule, reason: 'Blocked (global time window)' };
+  }
+
+  return { allowed: true };
 }
 
 // Enforce rules on a URL
@@ -213,16 +247,18 @@ function enforceRules(url, tabId) {
     }
   }
 
-  // Check time windows
-  const timeCheck = isInBlockedTimeWindow();
-  if (timeCheck.blocked) {
+  // Evaluate time window scheduling (domain + global)
+  const schedule = evaluateTimeWindows(url);
+  if (schedule.blocked) {
     const state = ensureTab(tabId);
     state.blocked = {
-      reason: timeCheck.rule.explanation || "Blocked due to time restrictions",
-      rule: timeCheck.rule,
+      reason: schedule.rule?.explanation || schedule.reason,
+      rule: schedule.rule,
       timestamp: Date.now()
     };
-    return { blocked: true, reason: state.blocked.reason, rule: timeCheck.rule };
+    return { blocked: true, reason: state.blocked.reason, rule: schedule.rule };
+  } else if (schedule.allowed === true && schedule.reason) {
+    return { allowed: true };
   }
 
   // Check blocklist
@@ -353,14 +389,32 @@ chrome.webNavigation.onCompleted.addListener(async (nav) => {
       keepalive: true
     }).catch(() => {});
 
-    // Local fast-feedback XP award
-    awardXp({
-      trackers: navTrackers,
-      csp: record.policy_state.csp_present,
-      cors: record.policy_state.cors_signals,
-      blocked: record.policy_state.blocked,
-      violation: false
-    });
+    // XP farming prevention: check cooldown
+    const now = Date.now();
+    const lastAwarded = recentNavigations.get(tab.url) || 0;
+    const timeSinceLastAward = now - lastAwarded;
+    
+    if (timeSinceLastAward >= XP_COOLDOWN_MS) {
+      // Local fast-feedback XP award
+      awardXp({
+        trackers: navTrackers,
+        csp: record.policy_state.csp_present,
+        cors: record.policy_state.cors_signals,
+        blocked: record.policy_state.blocked,
+        violation: false
+      });
+      
+      // Update last awarded timestamp
+      recentNavigations.set(tab.url, now);
+      
+      // Cleanup old entries (keep last 100 URLs to prevent memory leak)
+      if (recentNavigations.size > 100) {
+        const oldestKey = recentNavigations.keys().next().value;
+        recentNavigations.delete(oldestKey);
+      }
+    } else {
+      console.log(`[XP] Cooldown active for ${tab.url} (${Math.round((XP_COOLDOWN_MS - timeSinceLastAward) / 1000)}s remaining)`);
+    }
   } catch (e) {
     console.error("Audit submit error:", e);
   }

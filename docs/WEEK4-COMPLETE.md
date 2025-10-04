@@ -1,271 +1,81 @@
 # GuardianCore Week 4 - Complete Documentation
 
-**Version:** 0.4.2 (Active Time & Dev Tools)  
-**Released:** October 4, 2025  
+**Version:** 0.4.5 (Scheduled Windows & XP Balance)  
+**Released:** 2025-10-04  
 **Branch:** phase-4  
-**Focus:** Gamification, Risk Scoring, Security Hardening, Active-Time Streak, Developer Tooling
+**Focus:** XP-Only Gamification, Security Hardening, PIN/Recovery System, Developer Tooling
 
 ---
 
 ## 📋 Table of Contents
 
-1. [Overview](#overview)
-2. [Quick Start](#quick-start)
-3. [Features Implemented](#features-implemented)
-4. [Security Enhancements](#security-enhancements)
-5. [Testing Guide](#testing-guide)
-6. [API Reference](#api-reference)
-7. [Troubleshooting](#troubleshooting)
-8. [Files Modified](#files-modified)
-9. [Changelog](#changelog)
-
----
-
-## Overview
-
-Week 4 delivers production-ready gamification cues, risk scoring, and hardened security for GuardianCore's privacy-focused parental controls.
-
-### Key Achievements (Cumulative) ✅
-
-- 🔐 **Hardened PIN Storage**: PBKDF2-SHA-256 (310k iterations)
-- 🔑 **Recovery Codes**: 10 one‑time codes (unique salt + PBKDF2)
-- 🎮 **Gamification v2**: Active browsing streak accumulator + fast mode
-- 📊 **Risk Scoring v1**: Weighted privacy / restriction signals (0–100)
-- 🛰️ **Real-Time Updates**: 30s polling + targeted push events
-- 🧪 **Dev / Test Tools** (hidden): Simulate violation, add safe hours, live risk refresh
-- 🛠 **Options Tab**: Consolidated PIN + fast mode toggle (Security tab renamed)
-- 🚫 **Rule Explanations Removed**: Prevents leaking rationale to curious users
-- 💾 **Export/Import v2**: Endpoints moved to `/rules/all/export` & `/rules/all/import`
-- 🧱 **Security Loophole Closed**: Regeneration of recovery codes now PIN-gated
-- 👥 **Strict Role Separation**: Child popup remains read-only & rule‑blind
-
----
-
-## Quick Start
-
-### 1. Start Backend
-
-```bash
-cd guardiancore
-docker-compose up --build -d
-
-# Verify services
-docker ps
-curl http://localhost:8000/health
-# Expected: {"status":"ok","name":"GuardianCore","env":"dev"}
-```
-
-### 2. Load Extension
-
-1. Open Chrome/Brave
-2. Navigate to `chrome://extensions`
-3. Enable "Developer mode" (top right)
-4. Click "Load unpacked"
-5. Select `guardiancore/app-extension` folder
-6. Pin extension to toolbar
-
-### 3. First-Time Setup
-
-#### Configure Backend (Popup)
-1. Click extension icon → Settings tab
-2. Enter:
-   - Backend URL: `http://localhost:8000`
-   - API Token: `dev-token-123`
-3. Click "Save Settings"
-
-#### Set Up PIN (Options Page)
-1. Right-click extension icon → "Options"
-2. **First time**: You'll see "Create Your PIN"
-3. Enter a PIN (at least 4 digits)
-4. Confirm PIN
-5. **Important**: Alert shows your 10 recovery codes
-6. Copy/save codes immediately (shown only once)
-
-#### Download Recovery Codes
-1. In Options page, navigate to "Recovery Codes" tab
-2. You'll see batch status (10 unused codes)
-3. Click "Regenerate Codes" (requires PIN)
-4. File downloads as `guardian_recovery_codes_YYYYMMDD_BATCHID.txt`
-5. **Store this file securely offline!**
+1. [Overview](#ove- Physical OS access → Can export chrome.storage.local (OS-level threat)
+- Lost PIN + Lost recovery codes → Unrecoverable (by design)
+- No rate limiting on PIN attempts (future enhancement)
 
 ---
 
 ## Features Implemented
 
-### 1. Risk Scoring v1 (Backend)
+### 1. XP System (Extension - Local)
 
-**Endpoint:** `GET /risk/score`
+**Implementation:** `background.js`
 
-**Algorithm:**
-```python
-score = (
-    blocked_site_attempts * 12 +
-    time_window_violations * 10 +
-    high_risk_tracker_origins * 6 +
-    long_gaming_sessions * 8 -
-    min(compliant_hours, 24) * 1
-)
-score = max(0, min(100, score))  # Clamp to [0, 100]
-```
-
-**Weights (Configurable):**
-- Blocked site attempts: +12 per event
-- Time violation: +10 per event
-- High-risk tracker: +6 per origin
-- Long session: +8 per session (>2 hours)
-- Compliant hour: -1 per hour (capped at 24)
-
-**Response:**
-```json
-{
-  "score": 42,
-  "updated_at": "2025-10-04T12:31:00Z",
-  "inputs_breakdown": {
-    "blocked_site_attempts": 2,
-    "time_window_violations": 1,
-    "high_risk_tracker_origins": 3,
-    "long_gaming_sessions": 0,
-    "compliant_hours": 18,
-    "total_audits_analyzed": 245,
-    "window_hours": 24
+```javascript
+function awardXp(event) {
+  ensureXpDay();
+  let delta = 1; // base
+  if (event.csp) delta += 2;
+  if (event.cors) delta += 1;
+  if (event.trackers === 0) delta += 3; 
+  else delta -= Math.min(event.trackers, 5);
+  if (event.blocked || event.violation) delta -= 5;
+  if (delta < 0) delta = Math.max(delta, -7);
+  if (fastMode) delta *= 3;
+  
+  xpState.xp += delta;
+  if (xpState.xp < 0) xpState.xp = 0;
+  
+  while (xpState.xp >= 100) {
+    xpState.xp -= 100;
+    xpState.level += 1;
   }
+  
+  persistXp();
+  notifyPopup();
 }
 ```
 
-### 2. Gamification Cues (Extension - Local)
+**Triggers:**
+- `chrome.webNavigation.onCompleted` (main frame only)
+- Blocked navigations (immediate penalty)
 
-**Safe Streak (Active Time Model)**:
-- Tracks **active browsing time** (navigations + heartbeat) since last violation
-- Heartbeat: every 5 min normal / every 10s in Fast Mode
-- Resets on blocked navigation (violation)
-- Fast Mode (test only): 1 minute counts as 1 hour (via Options tab toggle)
-- Persists accumulated milliseconds in `gc_active_ms`
-- Display: single green numeric hour count + compliant message at ≥12h
+**Excluded:**
+- `chrome://` pages
+- `chrome-extension://` pages
+- Navigations within XP cooldown window
 
-**Risk Score Display** (Popup):
-- Polled every 30s (and on popup open)
-- Color-coded: Green (0–29), Yellow (30–69), Red (70–100)
-- Hidden dev panel (unlock: press 'D' 5×) reveals textual breakdown block
+### 2. Auto-Refresh Rules (v0.4.3)
 
-**Time-Left Nudges**:
-- 15‑minute warning before a time window starts (if within upcoming window)
-- Lightweight local message (no server call)
+**Problem:** After saving backend config in Options, rules list was empty until page refresh + PIN re-entry.
 
-**Compliant Message**:
-- Appears when active safe streak ≥12 hours
-- Purely local; not sent to backend
-
-### 3. Hardened PIN Storage (Extension)
-
-**Algorithm:** PBKDF2-HMAC-SHA-256
-
-**Parameters:**
-- Iterations: 310,000 (OWASP 2023 recommendation)
-- Salt: 16 bytes (random per PIN)
-- Output: 32 bytes (256 bits)
-
-**Storage Format:**
+**Solution:**
 ```javascript
-{
-  algo: "PBKDF2-SHA256",
-  iter: 310000,
-  salt: "base64-encoded-salt",
-  hash: "base64-encoded-hash",
-  created_at: "2025-10-04T12:31:00Z"
+async function saveSettings() {
+  await chrome.storage.local.set({ gc_backend_url, gc_api_token });
+  showStatus("✅ Settings saved successfully", "success");
+  
+  // Auto-load rules immediately
+  await loadRules();
+  
+  // Notify background to refetch
+  chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
 }
 ```
 
-**Security Properties:**
-- ✅ No plaintext PIN ever stored
-- ✅ Constant-time comparison (prevents timing attacks)
-- ✅ Unique salt per PIN (prevents rainbow tables)
-- ✅ 310k iterations (brute-force resistant)
+**Result:** Rules appear instantly after saving config, no page refresh needed.
 
-### 4. Recovery Codes System (Extension)
-
-**Format:** `XXXX-XXXX-XXXX`
-
-**Alphabet:** `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`
-- No look-alikes (I/1, O/0, S/5, Z/2)
-- 32 characters → ~5 bits per character
-- 12 characters → ~60 bits entropy
-
-**Storage (Per Code):**
-```javascript
-{
-  id: "uuid-v4",
-  salt: "unique-16-byte-salt",
-  iter: 310000,
-  hash: "pbkdf2-hash",
-  used: false,
-  used_at: null
-}
-```
-
-**Batch Structure:**
-```javascript
-{
-  version: 1,
-  batch_id: "uuid-v4",
-  codes: [ /* 10 hashed codes */ ],
-  created_at: "2025-10-04T12:31:00Z",
-  active: true
-}
-```
-
-**Operations:**
-- **Generate:** Creates batch of 10 codes, shows plaintext once
-- **Download:** Exports to .txt file with metadata
-- **Regenerate:** Creates new batch, marks old batch inactive (requires PIN)
-- **Verify:** Constant-time comparison, marks code as used
-- **Forgot PIN:** Accepts recovery code → Reset PIN → Auto-unlock
-
-### 5. Real-Time Background Updates (Extension)
-
-**Polling Interval:** 30 seconds (debounced)
-
-**Endpoints Polled:**
-- `/rules` → Rules list (cached)
-- `/audit/stats` → Stats (cached)
-- `/risk/score` → Risk score (cached)
-
-**Message Types:**
-- `risk:update` → Risk score changed
-- `rules:update` → Rules modified
-- `stats:update` → Stats refreshed
-- `nudge:streak` → Streak milestone
-- `nudge:timeleft` → Time window closing
-
-**Caching:**
-- Stored in `chrome.storage.local`
-- ETags for versioning
-- Background worker manages sync
-
-### 6. Role Separation
-
-**Parent (options.html):**
-- Full CRUD for rules
-- PIN setup/change
-- Recovery code management
-- Export/import rules
-- Factory reset
-- Backend configuration
-
-**Child (popup.html):**
-- View-only activity summary
-- Safe streak display
-- Risk score display
-- "Open Parent Settings" button
-- No editing capabilities
-
-**Security:**
-- Options page locked behind PIN
-- Popup is always accessible (read-only)
-- PIN required for sensitive operations
-
-### 7. Export/Import (Backend) – Updated
-
-Legacy endpoints were refactored to avoid path conflicts with dynamic rule IDs. Current stable endpoints:
+### 3. Export/Import (Backend)
 
 **Export Endpoint:** `GET /rules/all/export`
 
@@ -273,14 +83,13 @@ Legacy endpoints were refactored to avoid path conflicts with dynamic rule IDs. 
 ```json
 {
   "version": "1",
-  "exported_at": "2025-10-04T12:31:00Z",
+  "exported_at": "2025-10-04T12:00:00Z",
   "rules": [
     {
-      "id": "uuid",
-      "bundle_id": "uuid",
       "rule_type": "blocklist",
-      "rule_data": {...},
-      "created_at": "2025-10-04T12:00:00Z"
+      "pattern": "tiktok.com",
+      "category": "social_media",
+      "enabled": true
     }
   ]
 }
@@ -288,7 +97,7 @@ Legacy endpoints were refactored to avoid path conflicts with dynamic rule IDs. 
 
 **Import Endpoint:** `POST /rules/all/import`
 
-**Request Body:**
+**Request:**
 ```json
 {
   "version": "1",
@@ -296,9 +105,18 @@ Legacy endpoints were refactored to avoid path conflicts with dynamic rule IDs. 
 }
 ```
 
-### 8. WebAuthn Stubs (Backend)
+**Response:**
+```json
+{
+  "imported": 5,
+  "skipped": 0,
+  "errors": []
+}
+```
 
-**Endpoints (All return stub response):**
+### 4. WebAuthn Stubs (Backend)
+
+**Endpoints (All return stub):**
 - `POST /webauthn/register/options`
 - `POST /webauthn/register/verify`
 - `POST /webauthn/assertion/options`
@@ -308,16 +126,16 @@ Legacy endpoints were refactored to avoid path conflicts with dynamic rule IDs. 
 ```json
 {
   "status": "stub",
-  "message": "WebAuthn registration coming soon",
+  "message": "WebAuthn coming soon",
   "available": false
 }
 ```
 
-### 9. Factory Reset (Extension)
+### 5. Factory Reset (Extension)
 
 **Functionality:**
 - Clears all `chrome.storage.local` data
-- Wipes PIN, recovery codes, cached rules
+- Wipes PIN, recovery codes, cached rules, XP state
 - Reloads extension via `chrome.runtime.reload()`
 
 **Safety:**
@@ -325,70 +143,278 @@ Legacy endpoints were refactored to avoid path conflicts with dynamic rule IDs. 
 - Explicit warnings shown
 - No undo capability
 
+---)
+2. [Quick Start](#quick-start)
+3. [Gamification System (XP-Only)](#gamification-system-xp-only)
+4. [Security Enhancements](#security-enhancements)
+5. [Features Implemented](#features-implemented)
+6. [Testing Guide](#testing-guide)
+7. [API Reference](#api-reference)
+8. [Troubleshooting](#troubleshooting)
+9. [Changelog](#changelog)
+
+---
+
+## Overview
+
+Week 4 delivers a streamlined, fast-feedback gamification system and production-ready security for GuardianCore's privacy-focused parental controls.
+
+### Key Achievements ✅
+
+- 🎯 **XP-Only Gamification**: Instant feedback on every navigation
+- ⚖️ **XP Balance Tuning**: Tracker penalty −0.5 (max −2.5) & negative floor −5 (was −7)
+- � **Scheduled Time Windows**: Global or per-domain block / allow-only windows
+- 🌐 **Global vs Domain**: Leave domain blank for global curfew; fill for domain-specific schedule
+- 🔁 **Allow-Window Semantics**: Outside an allow-only window → domain blocked automatically
+- 🏷 **Mandatory Reasons**: Every rule requires an explanatory reason
+- ⏱ **Rule Timestamps & Scope Tags**: "24h" vs "Window" + created datetime
+- 🔑 **Recovery Codes Simplified**: One-time view; minimal surface
+- � **PBKDF2 PIN Security**: 310k iterations, unique salt
+- 🧪 **Dev Tools**: Fast mode, violation simulation, XP reset
+- 💾 **Export/Import**: `/rules/all/export` & `/rules/all/import`
+- 🧱 **Security Loopholes Closed**: PIN-gated regeneration, XP farming prevention
+- 👥 **Role Separation**: Popup is read‑only, rules hidden from child
+- ⚡ **Auto-Refresh Rules**: Immediate display after backend save
+- 🛠 **Dev Productivity**: `make db-reset` for schema resets
+
+### Version History
+
+- **0.4.0** - Initial Week 4: Risk score + safe streak + PIN system
+- **0.4.1** - Security fixes: recovery code loophole patched
+- **0.4.2** - Active-time streak redesign + dev tools
+- **0.4.3** - XP-only model, XP farming prevention, auto-refresh rules
+- **0.4.4** - XP balance tuning (tracker penalties, negative floor), recovery UI simplification
+- **0.4.5** - Scheduled time windows (domain/global + allow/block), mandatory reasons, timestamps, db-reset
+
+---
+
+## Quick Start
+
+### 1. Start Backend
+
+```bash
+cd guardiancore
+docker compose up -d
+
+# Verify services
+docker ps
+curl http://localhost:8000/health
+# Expected: {"status":"ok","name":"GuardianCore","env":"dev"}
+```
+
+### 2. Load Extension
+
+1. Open `chrome://extensions`
+2. Enable "Developer mode"
+3. Click "Load unpacked" → Select `app-extension` folder
+4. Pin extension to toolbar
+
+### 3. First-Time Setup
+
+#### A. Create PIN (Options Page)
+1. Right-click extension → "Options"
+2. Enter PIN (≥4 digits), confirm
+3. **Alert shows 10 recovery codes** - save them immediately!
+4. Options page auto-unlocks
+
+#### B. Configure Backend (Options Page)
+1. Settings tab
+2. Backend URL: `http://localhost:8000`
+3. API Token: `dev-token-123`
+4. Click "Save Backend Settings"
+5. Rules list loads automatically (no refresh needed!)
+
+---
+
+## Gamification System (XP-Only)
+
+### 🎯 Design Rationale
+
+**Removed:** Risk score (backend polling, 0–100 static value) + Safe streak (active time accumulation, heartbeat timers)
+
+**Why?** Too static, overlapping meaning, added complexity without clear user benefit.
+
+**New:** Local XP system with instant feedback per navigation.
+
+### 🧮 XP Rules (v0.4.5)
+
+| Event / Condition | XP Delta |
+|-------------------|----------|
+| Base per page load | +1 |
+| Page has CSP header | +2 |
+| Page exposes CORS signals | +1 |
+| Zero trackers detected | +3 |
+| Each tracker (up to 5) | **-0.5 each** (max -2.5) |
+| Blocked / violation navigation | -5 |
+| Fast Mode enabled (dev) | Final delta ×3 |
+
+**Mechanics:**
+- XP floors at 0 (never negative overall)
+- Level up every 100 XP (XP wraps carry remainder)
+- Daily reset at UTC day boundary; level persists
+- Single-event negative delta floored at -5 (was -7 pre-0.4.4)
+- Tracker penalty reduced for fairness on tracker-heavy sites
+
+### 🔄 Daily Reset Logic
+
+Stored state: `gc_xp_state`
+```json
+{ "dayKey": "2025-10-04", "xp": 57, "level": 3 }
+```
+
+On any XP mutation:
+1. Check if `dayKey !== today`
+2. If true: reset `xp = 0`, keep `level`, update `dayKey`
+3. Persist to storage
+
+### 🚫 XP Farming Prevention (v0.4.3)
+
+**Problem:** Spamming refresh (F5) on the same URL awarded XP every time.
+
+**Solution:** URL + timestamp tracking with 30-second cooldown.
+
+```javascript
+// Per-URL cooldown
+const recentNavigations = new Map(); // url -> last_awarded_timestamp
+const XP_COOLDOWN_MS = 30000; // 30 seconds
+
+// Before awarding XP:
+if (timeSinceLastAward >= XP_COOLDOWN_MS) {
+  awardXp(...);
+  recentNavigations.set(url, now);
+}
+```
+
+**Result:** Refreshing the same page repeatedly won't farm XP. User must navigate to different pages or wait 30 seconds.
+
+### 🧩 Popup UX
+
+**Visible Elements:**
+- Level (persistent)
+- Daily XP (current, resets daily)
+- Progress bar (0-100%, fills as XP increases)
+- "X XP to next level" text
+- **"How you earn XP"** explanation list
+
+**Removed Elements:**
+- Safe Streak hours
+- Risk score color indicator
+- Compliant message
+- Time restriction nudges
+
 ---
 
 ## Security Enhancements
 
-### Critical: Recovery Code Regeneration Loophole - CLOSED ✅
+### 🔐 PIN Storage (PBKDF2)
 
-**Issue:** Attacker could regenerate codes without PIN, then use new code to reset PIN and gain access.
+**Algorithm:** PBKDF2-HMAC-SHA-256
 
-**Attack Vector (Before Fix):**
-```
-1. Attacker opens options page (locked)
-2. Navigate to "Recovery Codes" tab
-3. Click "Regenerate Codes" (no verification required)
-4. Download new codes
-5. Click "Forgot PIN?"
-6. Use newly generated code
-7. Reset PIN → GAIN ACCESS ❌
-```
+**Parameters:**
+- Iterations: 310,000 (OWASP 2023)
+- Salt: 16 bytes random (unique per PIN)
+- Output: 32 bytes (256 bits)
 
-**Protection (After Fix):**
+**Storage Format:**
 ```javascript
-async function regenerateRecoveryCodes() {
-  // PIN VERIFICATION REQUIRED
-  const currentPin = prompt("Enter your current PIN to regenerate recovery codes:");
-  const isValid = await crypto.verifyPin(currentPin, storedPin);
-  
-  if (!isValid) {
-    alert("❌ Incorrect PIN. Cannot regenerate recovery codes.");
-    return; // BLOCKED
-  }
-  
-  // Only proceed if PIN verified
-  const { batch_id, codes } = await crypto.createRecoveryBatch();
-  // ... download codes
+{
+  algo: "PBKDF2-SHA256",
+  iter: 310000,
+  salt: "base64-encoded-salt",
+  hash: "base64-encoded-hash",
+  created_at: "ISO-8601-timestamp"
 }
 ```
 
-**Impact:** 🔴 HIGH - Prevented unauthorized access attack vector
+**Security Properties:**
+- ✅ No plaintext PIN ever stored
+- ✅ Constant-time comparison (prevents timing attacks)
+- ✅ Unique salt per PIN (prevents rainbow tables)
+- ✅ 310k iterations (brute-force resistant)
 
-### UX Improvements
+### 🔑 Recovery Codes
 
-**First-Time PIN Setup:**
-- **Before:** Showed "Default PIN: 1234" during creation (confusing)
-- **After:** Clean "Create Your PIN" flow, no default mentioned
+**Format:** `XXXX-XXXX-XXXX`
 
-**Forgot PIN Flow:**
-- **Before:** Simple prompt, no validation
-- **After:** Format validation, clear prompts with emojis, automatic unlock after reset
+**Alphabet:** `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (32 chars, no look-alikes)
 
-**Error Messages:**
-- **Before:** Generic "Invalid code"
-- **After:** Specific errors with emojis (❌ Invalid format, ✅ Code verified, etc.)
+**Entropy:** 12 characters × ~5 bits = ~60 bits
 
-### Security Checklist ✅
+**Storage (Per Code):**
+```javascript
+{
+  id: "uuid-v4",
+  salt: "base64-16-bytes",
+  iter: 310000,
+  hash: "base64-hash",
+  used: false,
+  used_at: null
+}
+```
+
+**Operations:**
+- **Generate:** Creates 10 codes, shows plaintext once (alert), then deletes plaintext from storage
+- **Download:** Exports as `.txt` file (date + batch ID in filename)
+- **Regenerate:** Requires PIN verification, marks old batch inactive
+- **Verify:** Constant-time comparison, one-time use only
+- **Forgot PIN:** Enter recovery code → Reset PIN → Auto-unlock options
+
+### 🔴 Critical Security Fix: Recovery Regeneration Loophole
+
+**Attack Vector (Before 0.4.1):**
+1. Attacker opens locked options page
+2. Navigate to Recovery Codes tab
+3. Regenerate codes (no PIN required)
+4. Use new code to reset PIN
+5. Gain access ❌
+
+**Fix:**
+```javascript
+async function regenerateRecoveryCodes() {
+  const pin = prompt("Enter your PIN to confirm:");
+  if (!pin) return;
+  
+  const result = await verifyPIN(pin);
+  if (!result.valid) {
+    alert("❌ Incorrect PIN. Cannot regenerate codes.");
+    return;
+  }
+  // ... proceed with regeneration
+}
+```
+
+**Impact:** 🔴 HIGH - Prevented unauthorized access vector
+
+### ✅ Security Checklist
 
 - [x] PIN stored as PBKDF2 hash (310k iterations)
 - [x] Recovery codes stored as PBKDF2 hashes
-- [x] Each recovery code has unique salt
-- [x] Recovery codes can only be used once
+- [x] Each code has unique salt
+- [x] Codes can only be used once
 - [x] Constant-time comparison prevents timing attacks
 - [x] Regenerating codes requires PIN verification
 - [x] Old codes invalidated when new batch created
 - [x] No plaintext secrets in chrome.storage.local
 - [x] Format validation on recovery code input
+- [x] XP farming prevented via URL cooldown
+
+### 🛡️ Threat Model
+
+**Mitigated Threats:**
+
+| Threat | Mitigation |
+|--------|-----------|
+| Unauthorized code regeneration | PIN required before regeneration |
+| Recovery code reuse | Codes marked as used after verification |
+| Timing attacks | Constant-time comparison |
+| Rainbow table attacks | Unique salts per code/PIN |
+| Brute force attacks | PBKDF2 with 310k iterations |
+| XP farming (refresh spam) | 30-second per-URL cooldown |
+
+**Known Limitations:**
+- Physical OS access → Can export chrome.storage.local (OS-level threat)
+- Lost PIN + Lost recovery codes → Unrecoverable (by design)
+- No rate limiting on PIN attempts (future enhancement)
 - [x] Clear user feedback for all operations
 
 ### Threat Model
@@ -412,94 +438,116 @@ async function regenerateRecoveryCodes() {
 
 ## Testing Guide
 
-### Quick Test (2 Minutes)
-
-#### Test 1: Forgot PIN Flow (30 seconds)
+### Test 1: PIN Creation & Recovery (3 min)
 
 ```
-✅ 1. Create PIN: 1234
-   Alert shows 10 recovery codes → Copy one code
-   
-✅ 2. Close options page
+✅ 1. Remove extension, clear storage:
+   chrome.storage.local.clear()
 
-✅ 3. Reopen options → Click "Forgot PIN?"
+✅ 2. Reload extension, open Options
 
-✅ 4. Enter recovery code
+✅ 3. Create PIN: 1234
+   Confirm: 1234
+   Expected: Alert shows 10 recovery codes
+
+✅ 4. Save one code, close options
+
+✅ 5. Reopen options → Click "Forgot PIN?"
+
+✅ 6. Enter saved code
    Expected: ✅ "Recovery code verified!"
-   
-✅ 5. Create new PIN: 5678
-   Confirm: 5678
-   Expected: ✅ "PIN reset successfully!"
-   Expected: ✅ Settings automatically unlocked
 
-✅ 6. Close and reopen → Enter 5678 → Should unlock
+✅ 7. Create new PIN: 5678
+   Expected: Auto-unlocks to settings
 
-✅ 7. Try same recovery code again
+✅ 8. Try same code again
    Expected: ❌ "Invalid or already used"
 ```
 
-#### Test 2: Regeneration Security (30 seconds)
+### Test 2: XP System (4 min)
 
 ```
-✅ 1. Options unlocked
+✅ 1. Open popup
+   Expected: Level 1, XP 0, empty progress bar
 
-✅ 2. Go to "Recovery Codes" tab
+✅ 2. Navigate to 3 different websites
+   Expected: XP increases (3-12 depending on trackers/CSP)
 
-✅ 3. Click "Regenerate Codes"
-   Expected: Prompt "Enter your current PIN"
+✅ 3. Press F5 (refresh) 5 times on same page
+   Expected: XP only increases once (cooldown active)
 
-✅ 4. Enter WRONG PIN (e.g., 0000)
-   Expected: ❌ "Incorrect PIN. Cannot regenerate"
+✅ 4. Wait 30 seconds, refresh again
+   Expected: XP increases (cooldown expired)
 
-✅ 5. Click "Regenerate Codes" again
+✅ 5. Dev tools (press D 5×) → "Simulate Violation"
+   Expected: XP decreases by 5
 
-✅ 6. Enter CORRECT PIN (5678)
-   Expected: ⚠️ Warning about invalidating old codes
-   
-✅ 7. Confirm → File downloads
-   Expected: ✅ New recovery codes downloaded
+✅ 6. Dev tools → "Reset XP"
+   Expected: XP = 0, level unchanged, bar empties
 ```
 
-#### Test 3: Storage Security (30 seconds)
+### Test 3: Auto-Refresh Rules (2 min)
 
 ```
-✅ 1. Options page → Right-click → Inspect
+✅ 1. Open Options (unlocked)
 
-✅ 2. Console tab
+✅ 2. Go to Settings tab
 
-✅ 3. Run:
-   chrome.storage.local.get('recovery_batches', console.log)
+✅ 3. Enter backend config:
+   URL: http://localhost:8000
+   Token: dev-token-123
 
-✅ 4. Verify:
-   - ❌ No plaintext codes visible
-   - ✅ Each code has "salt" field
-   - ✅ Each code has "hash" field
-   - ✅ "iter": 310000
-   - ✅ "used": true/false
+✅ 4. Click "Save Backend Settings"
+   Expected: Success message + Rules list loads immediately
 
-✅ 5. Run:
-   chrome.storage.local.get('pin', console.log)
-
-✅ 6. Verify:
-   - ❌ No plaintext PIN
-   - ✅ Has "salt" field
-   - ✅ Has "hash" field
-   - ✅ "algo": "PBKDF2-SHA256"
-   - ✅ "iter": 310000
+✅ 5. Go to Rules tab
+   Expected: Rules already visible (no refresh needed)
 ```
 
-### Comprehensive Test Suite
+### Test 4: XP Farming Prevention (2 min)
 
-#### Backend Tests
+```
+✅ 1. Open popup, note current XP
+
+✅ 2. Navigate to any website
+   Expected: XP increases
+
+✅ 3. Press F5 (refresh) 10 times rapidly
+   Expected: XP does NOT increase after first load
+
+✅ 4. Background console shows:
+   "[XP] Cooldown active for [url] (Xs remaining)"
+
+✅ 5. Wait 30 seconds, refresh once
+   Expected: XP increases again
+```
+
+### Test 5: Recovery Code Download (2 min)
+
+```
+✅ 1. Options → Recovery Codes tab
+
+✅ 2. Click "Regenerate Codes"
+   Enter PIN: 1234
+   Confirm warning
+
+✅ 3. File downloads as:
+   guardian_recovery_codes_20251004_XXXXX.txt
+
+✅ 4. Open file
+   Expected: 10 codes in XXXX-XXXX-XXXX format
+
+✅ 5. Recovery tab updates
+   Expected: 10 unused codes, old batch gone
+```
+
+### Backend Tests
 
 ```bash
-# Test risk score endpoint
-curl http://localhost:8000/risk/score \
-  -H "Authorization: Bearer dev-token-123"
+# Test health endpoint
+curl http://localhost:8000/health
 
-# Expected: { score: 0-100, inputs_breakdown, updated_at }
-
-# Test WebAuthn stubs
+# Expected: {"status":"ok","name":"GuardianCore","env":"dev"}
 curl -X POST http://localhost:8000/webauthn/register/options \
   -H "Authorization: Bearer dev-token-123"
 
@@ -564,300 +612,173 @@ curl -X POST http://localhost:8000/rules/import \
 
 ## API Reference
 
-### Risk Scoring
+### Backend Endpoints
 
-#### GET /risk/score
+#### Health Check
+```bash
+GET /health
+Response: { "status": "ok", "name": "GuardianCore", "env": "dev" }
+```
 
-**Description:** Calculate risk score from last 24 hours of audit data
+#### Rules Export
+```bash
+GET /rules/all/export
+Headers: Authorization: Bearer <token>
+Response: { version: "1", rules: [...] }
+```
 
-**Headers:**
-- `Authorization: Bearer <token>`
+#### Rules Import
+```bash
+POST /rules/all/import
+Headers: Authorization: Bearer <token>
+Body: { version: "1", rules: [...] }
+Response: { imported: N, skipped: M, errors: [] }
+```
 
-**Response:**
-```json
-{
-  "score": 42,
-  "updated_at": "2025-10-04T12:31:00Z",
-  "inputs_breakdown": {
-    "blocked_site_attempts": 2,
-    "time_window_violations": 1,
-    "high_risk_tracker_origins": 3,
-    "long_gaming_sessions": 0,
-    "compliant_hours": 18,
-    "total_audits_analyzed": 245,
-    "window_hours": 24
-  }
+#### Audit Stats
+```bash
+GET /audit/stats
+Headers: Authorization: Bearer <token>
+Response: {
+  total_audits: 123,
+  unique_origins: 45,
+  avg_trackers: 2.3,
+  csp_coverage: 0.67,
+  cors_coverage: 0.89
 }
 ```
 
-**Status Codes:**
-- `200 OK` - Success
-- `401 Unauthorized` - Invalid token
-
-### WebAuthn (Stubs)
-
-#### POST /webauthn/register/options
-
-**Description:** Generate WebAuthn registration options (stub)
-
-**Response:**
-```json
-{
-  "status": "stub",
-  "message": "WebAuthn registration coming soon",
-  "available": false
-}
+#### WebAuthn (Stubs)
+```bash
+POST /webauthn/register/options
+POST /webauthn/register/verify
+POST /webauthn/assertion/options
+POST /webauthn/assertion/verify
+All return: { status: "stub", available: false }
 ```
 
-#### POST /webauthn/register/verify
+### Extension Messages
 
-**Description:** Verify WebAuthn registration (stub)
+#### Background → Popup
+```javascript
+// XP Update
+{ type: "xp:update", xp: 57, level: 3, progress: 0.57, delta: +3 }
 
-**Response:**
-```json
-{
-  "status": "stub",
-  "message": "WebAuthn verification coming soon",
-  "available": false
-}
+// Stats Update
+{ type: "stats:update", stats: { total_audits: 123, ... } }
 ```
 
-#### POST /webauthn/assertion/options
+#### Popup/Options → Background
+```javascript
+// Get XP State
+{ type: "GET_XP_STATE" }
+Response: { xp: 57, level: 3, progress: 0.57 }
 
-**Description:** Generate WebAuthn assertion options (stub)
+// Refresh Rules
+{ type: "REFRESH_RULES" }
+Response: { ok: true }
 
-**Response:**
-```json
-{
-  "status": "stub",
-  "message": "WebAuthn assertion coming soon",
-  "available": false
-}
-```
+// Dev: Toggle Fast Mode
+{ type: "DEV_TOGGLE_FAST_MODE" }
+Response: { ok: true, fastMode: true }
 
-#### POST /webauthn/assertion/verify
+// Dev: Simulate Violation
+{ type: "DEV_SIMULATE_VIOLATION" }
+Response: { ok: true }
 
-**Description:** Verify WebAuthn assertion (stub)
-
-**Response:**
-```json
-{
-  "status": "stub",
-  "message": "WebAuthn assertion verification coming soon",
-  "available": false
-}
-```
-
-### Rules Management
-
-#### GET /rules/export
-
-**Description:** Export all rules as JSON v1
-
-**Headers:**
-- `Authorization: Bearer <token>`
-
-**Response:**
-```json
-{
-  "version": "1",
-  "exported_at": "2025-10-04T12:31:00Z",
-  "rules": [
-    {
-      "id": "uuid",
-      "bundle_id": "uuid",
-      "rule_type": "blocklist",
-      "rule_data": {
-        "pattern": "facebook.com",
-        "enabled": true
-      },
-      "created_at": "2025-10-04T12:00:00Z"
-    }
-  ]
-}
-```
-
-#### POST /rules/import
-
-**Description:** Import rules from JSON v1
-
-**Headers:**
-- `Authorization: Bearer <token>`
-- `Content-Type: application/json`
-
-**Request Body:**
-```json
-{
-  "version": "1",
-  "rules": [ /* array of rule objects */ ]
-}
-```
-
-**Response:**
-```json
-{
-  "imported": 5,
-  "skipped": 0,
-  "errors": []
-}
+// Dev: Reset XP
+{ type: "DEV_RESET_XP" }
+Response: { ok: true }
 ```
 
 ---
 
 ## Troubleshooting
 
-### Issue: Page Frozen / Not Loading
+### Issue: XP Not Increasing
 
-**Symptoms:**
-- Options page shows but nothing clickable
-- No console errors
-- Extension appears loaded
+**Symptoms:** XP stays at 0 no matter how much browsing
 
-**Solution:**
-```
-1. chrome://extensions → Refresh extension (⟳)
-2. Right-click page → Inspect → Console
-3. Look for [Options] log messages:
-   - [Options] Script starting v0.4.1...
-   - [Options] Crypto module loaded
-   - [Options] DOM loaded, initializing...
-   - [Options] Stored PIN check: exists/not found
-4. Check for red errors
-5. If error persists, clear extension data:
-   chrome.storage.local.clear()
-   Then reload extension
-```
-
-### Issue: "Save Backend Settings" Not Working
-
-**Symptoms:**
-- Click "Save Backend Settings" button
-- No response or status message
+**Causes:**
+1. XP not initialized on load
+2. Navigation events not triggering
+3. All pages in cooldown window
 
 **Solution:**
-```
-1. Verify extension is unlocked (PIN entered)
-2. Check console for errors
-3. Verify button handler setup:
-   - Should see setupButtonHandlers() called in showMainContent()
-4. Try entering values and clicking again
-5. Check chrome.storage.local:
-   chrome.storage.local.get(['gc_backend_url', 'gc_api_token'], console.log)
+```javascript
+// Background console (chrome://extensions → service worker):
+// Should see: "GuardianCore Audit Probe v0.4.3 loaded"
+// Should see: XP award messages or cooldown messages
+
+// If not:
+chrome.storage.local.get('gc_xp_state', console.log)
+// Should show: { dayKey: "2025-10-04", xp: N, level: M }
+
+// Force refresh:
+chrome.runtime.reload()
 ```
 
-### Issue: Recovery Codes Not Downloading
+### Issue: Rules Not Loading After Config Save
 
-**Symptoms:**
-- Click "Regenerate Codes"
-- Enter PIN
-- No file downloads
+**Symptoms:** Save backend config, but rules list stays empty
+
+**Cause:** Fixed in 0.4.3 (auto-refresh implemented)
+
+**If still broken:**
+```javascript
+// Options page console:
+// Should see: [Options] Loaded N rules
+
+// Check:
+chrome.storage.local.get(['gc_backend_url', 'gc_api_token'], console.log)
+
+// Manually trigger:
+chrome.runtime.sendMessage({ type: "REFRESH_RULES" })
+```
+
+### Issue: XP Farming (Refresh Spam)
+
+**Symptoms:** Refreshing same page farms XP
+
+**Expected Behavior (v0.4.3):** 30-second cooldown per URL
+
+**Verify:**
+```javascript
+// Background console should show:
+"[XP] Cooldown active for https://example.com (25s remaining)"
+
+// If not seeing cooldowns:
+// Check version: should be v0.4.3 or higher
+```
+
+### Issue: PIN Creation Hangs
+
+**Symptoms:** Enter PIN, click Create, nothing happens
+
+**Cause:** Fixed in 0.4.3 (crypto module auto-generates salt)
 
 **Solution:**
-```
-1. Check manifest.json has "downloads" permission
-2. Verify chrome.downloads API available:
-   console.log(chrome.downloads)
-3. Check browser download settings (not blocked)
-4. Try in incognito mode (some extensions block downloads)
+```javascript
+// Options console should show:
+[Options] Script starting v0.4.4...
+[Options] Crypto module loaded: [object Object]
+
+// If undefined:
+// Reload extension
 ```
 
-### Issue: Forgot PIN Doesn't Work
+### Issue: Recovery Codes Don't Download
 
-**Symptoms:**
-- Click "Forgot PIN?"
-- Enter recovery code
-- Error: "Invalid or already used"
+**Symptoms:** Click Regenerate, enter PIN, no file downloads
+
+**Cause:** Fixed in 0.4.3 (batch structure corrected)
 
 **Solution:**
+```javascript
+// Check manifest has "downloads" permission
+// Check browser download settings
+// Try incognito mode
 ```
-1. Verify code format: XXXX-XXXX-XXXX
-2. Check code hasn't been used:
-   chrome.storage.local.get('recovery_batches', console.log)
-   Look for "used": true
-3. Verify batch is active:
-   Look for "active": true
-4. Try another code from the same batch
-5. If all codes used, extension data needs reset
-```
-
-### Issue: Risk Score Always 0
-
-**Symptoms:**
-- Popup shows "Risk Score: 0"
-- Backend is running
-
-**Solution:**
-```
-1. Submit some audit data:
-   curl -X POST http://localhost:8000/audit/submit \
-     -H "Authorization: Bearer dev-token-123" \
-     -H "Content-Type: application/json" \
-     -d '{
-       "origin_hash": "...",
-       "check_type": "page_audit_v2",
-       "policy_state": {
-         "tracker_count": 10
-       }
-     }'
-
-2. Check backend logs:
-   docker-compose logs -f backend
-
-3. Verify endpoint works:
-   curl http://localhost:8000/risk/score \
-     -H "Authorization: Bearer dev-token-123"
-```
-
-### Issue: Gamification Not Showing / Streak Stuck at 0
-
-**Added in v0.4.2:** Streak depends on *active* time. If you just leave a static tab open and never navigate, only the heartbeat increments (every 5 min normal / 10s fast mode). To test quickly:
-1. Enable Fast Mode in Options.
-2. Browse 2–3 different sites (causes immediate activity accumulation).
-3. Open popup – streak should grow every 10s.
-4. Simulate violation (dev tools in popup: press 'D' 5 times → "Simulate Violation"). Streak resets to 0.
-
-**Symptoms:**
-- Popup doesn't show safe streak or risk score
-- Fields are empty or "N/A"
-
-**Solution:**
-```
-1. Check background service worker:
-   chrome://extensions → GuardianCore → service worker
-   Should be "active"
-
-2. Verify background.js loaded:
-   Check for [Background] log messages
-
-3. Check gamification state:
-   chrome.storage.local.get('lastViolation', console.log)
-
-4. Trigger manual update:
-   - Open popup (triggers refresh)
-   - Wait 30 seconds for next poll
-```
-
----
-
-## Files Modified
-
-### Backend (FastAPI)
-
-**New Files:**
-- `src/app/routers/risk.py` - Risk scoring engine
-- `src/app/routers/webauthn.py` - WebAuthn stub endpoints
-
-**Modified Files:**
-- `src/app/db.py` - Added bundle_id, rules_schedules, rule_bundles tables
-- `src/app/config.py` - Added risk scoring weights, updated version
-- `src/app/main.py` - Included risk_router and webauthn_router
-- `src/app/routers/rules.py` - Added export/import endpoints
-
-### Extension (Chrome MV3)
-
-**New Files:**
-- `crypto.js` - PBKDF2 implementation, recovery codes (⭐ Core security)
-- `strings.js` - Centralized UI strings (i18n-ready)
 
 **Modified Files:**
 - `manifest.json` - Version updates, downloads permission
@@ -877,167 +798,185 @@ curl -X POST http://localhost:8000/rules/import \
 
 ## Changelog
 
-### v0.4.2 (October 4, 2025) - Active Time & Dev Tools
+### [0.4.5] - 2025-10-04
 
-#### 🎮 Gamification Enhancements
-- Replaced naive wall-clock streak with *active browsing accumulator* (navigation + heartbeat)
-- Fast Mode toggle (Options tab) accelerates streak (10s tick cadence)
-- Heartbeat persistence (`gc_active_ms`) ensures continuity after service worker restarts
+**Added:**
+- Domain & global scheduled time windows with `action` (block / allow)
+- Allow-only windows (outside window implicitly blocked)
+- Mandatory reason field for all rule types
+- Rule timestamps & scope label (24h vs Window)
+- `make db-reset` developer convenience target
 
-#### 🧪 Developer / QA Tooling
-- Hidden popup Dev Tools (press 'D' quickly 5×) with buttons:
-  - Enable/Disable Fast Mode
-  - Simulate Violation
-  - Add Safe Hours (synthetic)
-  - Refresh Risk Now
-- Risk input breakdown panel exposed in dev mode
+**Changed:**
+- Time window pattern JSON now includes `action` and optional `domain`
+- Formatter shows `[BLOCK window]` or `[ALLOW window]` plus domain if present
 
-#### 🔐 UX / Security Adjustments
-- Removed rule explanation field & rendering (prevents information leakage)
-- Centralized PIN actions under Options tab; removed algorithm wording from UI
+**Fixed:**
+- Domain-specific windows no longer apply globally
 
-#### 🛠 API & Endpoint Updates
-- Standardized export/import endpoints → `/rules/all/export`, `/rules/all/import`
+### [0.4.4] - 2025-10-04
 
-#### 🐛 Fixes
-- Streak no longer stuck at 0 during long passive sessions (heartbeat accumulation)
-- PIN change now properly persists (uses unified `storePin` helper)
+**Added:**
+- XP balance tuning: tracker penalty -0.5 (max -2.5), negative floor -5
+- Simplified recovery codes UI (one-time display only)
 
-### v0.4.1 (October 4, 2025) - Security Patch
+**Removed:**
+- Recovery status table (reduced sensitive code exposure)
 
-#### 🔒 Security Fixes
-- **Critical:** Closed recovery code regeneration loophole (PIN now required)
-- Enhanced "Forgot PIN?" flow with format validation
-- Improved error messages for better UX
+**Fixed:**
+- Edge cases around used recovery code visibility
 
-#### ✨ Features
-- Dynamic PIN hint (only shown for existing PIN, hidden during creation)
-- Format validation for recovery codes (XXXX-XXXX-XXXX)
-- Automatic unlock after successful PIN reset
-- Better prompts with emoji indicators
+### [0.4.3] - 2025-10-04
 
-#### 🐛 Bug Fixes
-- Fixed frozen page issue (button handlers now setup after unlock)
-- Fixed missing DOM elements (#pin-error, #forgot-pin-btn)
-- Added comprehensive error handling with try/catch
-- Added debug console logs ([Options] prefix)
+**Added:**
+- XP-only gamification system (removed risk score & safe streak)
+- XP farming prevention (30-second per-URL cooldown)
+- "How you earn XP" explanation in popup
+- "Remaining XP to next level" indicator
+- Dev Reset XP button
+- Auto-refresh rules after backend config save
+- Extracted XP styles to dedicated `xp.css`
 
-#### 📚 Documentation
-- Consolidated all Week 4 docs into single comprehensive guide
-- Created WEEK4-COMPLETE.md with full testing procedures
-- Added security quick reference
-- Updated troubleshooting section
+**Fixed:**
+- XP not increasing (tracker count captured before reset)
+- PIN creation hanging (hashPin auto-generates salt)
+- Recovery codes not downloading (batch structure fixed)
+- Rules not loading after config save (auto-refresh implemented)
+- XP farming via refresh spam (cooldown system)
 
-### v0.4.0 (October 3, 2025) - Week 4 Complete
+**Changed:**
+- Popup UI: Removed streak/risk, focused on XP progress
+- Background: Simplified to XP-only logic
+- Documentation: Merged into single comprehensive guide
 
-#### 🎮 Gamification
-- Safe streak hours tracking (local only)
-- Risk score display (color-coded: green/yellow/red)
-- Time-left nudges (15-minute warning)
-- Compliant message (≥12 hours streak)
-- Real-time UI updates via message passing
+**Removed:**
+- Risk score polling & display
+- Safe streak accumulation & heartbeat
+- Time-left nudges
+- Risk breakdown dev panel
+- Unused storage keys: `browserStartTime`, `gc_active_ms`
 
-#### 📊 Risk Scoring
-- Weighted scoring algorithm
-- Rolling 24-hour window
-- Configurable weights
-- Detailed breakdown in response
-- Range enforcement (0-100)
+### [0.4.2] - 2025-10-04
 
-#### 🔐 Security Hardening
-- PBKDF2-SHA-256 PIN hashing (310k iterations)
-- 10 recovery codes with unique salts
-- Constant-time comparison
-- No plaintext storage
-- One-time use enforcement
+**Added:**
+- Active-time safe streak (replaced elapsed time model)
+- Fast mode toggle (dev testing: 1 min = 1 hour)
+- Dev tools panel (unlock: press D 5×)
+- Simulate violation button
+- Add safe hours button
+- Manual risk refresh button
 
-#### ⚡ Real-Time Updates
-- Background polling (30s interval)
-- Debounced refresh
-- Rules/stats/risk caching
-- Push notifications to UIs
-- ETag support seeds
+**Changed:**
+- Streak calculation to active browsing time
+- Heartbeat interval (5 min normal / 10s fast mode)
+- Export/Import endpoints to `/rules/all/export` & `/rules/all/import`
 
-#### 👥 Role Separation
-- Parent (options.html): Full controls
-- Child (popup.html): View-only cues
-- PIN-gated settings
-- Read-only fields in popup
+### [0.4.1] - 2025-10-04
 
-#### 💾 Export/Import
-- JSON v1 schema
-- Rules backup/restore
-- Bundle support ready
-- Multi-interval schedule seeds
+**Security Fixes:**
+- Recovery code regeneration now requires PIN
+- Closed unauthorized access loophole
 
-#### 🔗 WebAuthn Stubs
-- Registration endpoints (stub)
-- Assertion endpoints (stub)
-- Future-ready for biometric auth
+**UX Improvements:**
+- First-time PIN setup flow cleaned up
+- Forgot PIN flow with format validation
+- Error messages with emojis
 
-#### 🔄 Factory Reset
-- Two-step confirmation
-- Clears all extension data
-- Reloads extension
-- Explicit warnings
+### [0.4.0] - 2025-10-04
+
+**Initial Week 4 Release:**
+- PBKDF2 PIN storage (310k iterations)
+- Recovery codes system (10 one-time codes)
+- Risk scoring backend endpoint
+- Safe streak tracking
+- Real-time background updates (30s polling)
+- Role separation (parent options vs child popup)
+- Rule explanations removed
+- Factory reset
 
 ---
 
-## Next Steps
+## 🧱 Storage Keys Reference
 
-### Immediate Actions
-1. ✅ Load extension in browser
-2. ✅ Run 2-minute quick test
-3. ✅ Verify chrome.storage.local (no plaintext)
-4. ✅ Test forgot PIN flow
-5. ✅ Test regeneration security
+### Active Keys (v0.4.3)
 
-### Future Enhancements
-- [ ] Add rate limiting for PIN attempts
-- [ ] Add recovery code expiration (optional)
-- [ ] Implement full WebAuthn support
-- [ ] Add PIN strength meter during creation
-- [ ] Add multi-language support (i18n)
-- [ ] Add biometric unlock (WebAuthn)
-- [ ] Add encrypted backup to cloud (opt-in)
+| Key | Type | Purpose |
+|-----|------|---------|
+| `pin` | Object | PBKDF2-hashed PIN data |
+| `recovery_batches` | Array | Hashed recovery code batches |
+| `gc_backend_url` | String | Backend API URL |
+| `gc_api_token` | String | Backend auth token |
+| `gc_xp_state` | Object | { dayKey, xp, level } |
+| `gc_fast_mode` | Boolean | Dev fast mode toggle |
 
----
+### Deprecated Keys (Safe to Remove)
 
-## Summary
-
-**What Changed:**
-- 🔒 Closed critical security loophole (PIN-gated regeneration)
-- ✨ Improved UX for PIN creation and recovery
-- 🐛 Fixed frozen page bug (button handler timing)
-- 📊 Added comprehensive debugging logs
-- 📚 Consolidated documentation
-
-**What's Secure:**
-- ✅ All secrets stored as PBKDF2 hashes (310k iterations)
-- ✅ Unique salts for each code/PIN
-- ✅ PIN required for sensitive operations
-- ✅ One-time use recovery codes
-- ✅ Constant-time comparison
-- ✅ No plaintext storage
-
-**What's Ready:**
-- ✅ Backend running (FastAPI + PostgreSQL)
-- ✅ Extension ready (Chrome MV3)
-- ✅ Risk scoring v1 operational
-- ✅ Gamification cues working
-- ✅ Security hardened
-- ✅ Documentation complete
-
-**Status:** PRODUCTION READY ✅
+| Key | Reason | Since |
+|-----|--------|-------|
+| `browserStartTime` | Streak system removed | 0.4.3 |
+| `gc_active_ms` | Streak system removed | 0.4.3 |
+| `lastViolation` | Only used for XP penalty now | 0.4.3 |
 
 ---
 
-**Version:** 0.4.1  
-**Released:** October 4, 2025  
-**Compatibility:** Chrome/Brave Manifest V3  
-**License:** MIT (if applicable)  
-**Contact:** guardiancore@example.com (update as needed)
+## 🚀 Future Enhancements
+
+### Backlog
+
+- [ ] Parent dashboard: weekly XP trends, achievement history
+- [ ] Achievement badges (first clean day, 5 consecutive safe pages, etc.)
+- [ ] Rate limiting on PIN attempts
+- [ ] WebAuthn implementation (replace stubs)
+- [ ] Sunset `/risk/score` backend endpoint (unused since 0.4.3)
+- [ ] Optional positive streak multiplier (if simple enough)
+- [ ] Persistent notification for level-ups
+- [ ] XP delta toast ("+5 XP" near progress bar)
+
+### Completed
+
+- [x] XP-only gamification
+- [x] XP farming prevention
+- [x] Auto-refresh rules after config save
+- [x] PIN creation flow fixes
+- [x] Recovery code download fixes
+- [x] Dev Reset XP button
+- [x] Extract XP styles to CSS
 
 ---
 
-*For additional support, see individual documentation files or check the project repository.*
+## 📝 Developer Notes
+
+### XP System Architecture
+
+**Local-First Design:** All XP logic runs in `background.js` service worker. No server calls, instant feedback.
+
+**Daily Reset:** Uses UTC ISO date string (`YYYY-MM-DD`) as key. Checked on every XP mutation and GET_XP_STATE request.
+
+**Cooldown Map:** `Map<url, timestamp>` tracks last XP award per URL. Limited to 100 entries to prevent memory leak.
+
+### Code Organization
+
+```
+app-extension/
+├── background.js    # Core: rules, enforcement, audit, XP
+├── popup.js         # Child UI: read-only, XP display
+├── options.js       # Parent UI: PIN-gated, rules CRUD
+├── crypto.js        # PBKDF2, recovery codes, salt generation
+├── xp.css           # XP bar & explanation styles
+└── manifest.json    # Extension config, permissions
+```
+
+### Testing Checklist
+
+- [ ] PIN creation works (alert shows codes)
+- [ ] Recovery codes download as .txt
+- [ ] Options page unlocks after PIN entry
+- [ ] Rules load after backend config save (no refresh)
+- [ ] XP increases on navigation
+- [ ] XP cooldown prevents refresh farming
+- [ ] Dev tools work (simulate violation, reset XP)
+- [ ] Daily XP resets at UTC day boundary
+
+---
+
+*GuardianCore v0.4.3 - Privacy-First Parental Controls*
