@@ -93,6 +93,11 @@ function setupTabs() {
       document.querySelectorAll(".tab-content").forEach(c => c.style.display = "none");
       const content = document.getElementById(`${targetTab}-tab`);
       if (content) content.style.display = "block";
+
+      // Refresh recovery status each time user opens that tab (after unlock)
+      if (isUnlocked && targetTab === 'recovery') {
+        loadRecoveryStatus();
+      }
     });
   });
 }
@@ -416,7 +421,7 @@ async function toggleRule(ruleId, enable) {
   ]);
   
   try {
-    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}/`, {
+  const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}`, {
       method: "PATCH",
       headers: {
         "Content-Type": "application/json",
@@ -444,7 +449,7 @@ async function deleteRule(ruleId) {
   ]);
   
   try {
-    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}/`, {
+  const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}`, {
       method: "DELETE",
       headers: {
         "Authorization": `Bearer ${gc_api_token}`
