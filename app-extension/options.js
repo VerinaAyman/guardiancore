@@ -326,33 +326,65 @@ async function loadRules() {
         rule.pattern;
       
       return `
-        <div class="rule-card">
+        <div class="rule-card" data-rule-id="${rule.id}">
           <div class="rule-header">
             <div class="rule-info">
               <h4>${pattern}</h4>
               <div class="rule-meta">
                 <span class="badge ${badgeClass}">${rule.rule_type}</span>
                 ${enabledBadge}
-                ${rule.category ? `<span class="badge">${rule.category}</span>` : ''}
+                ${rule.category ? `<span class=\"badge\">${rule.category}</span>` : ''}
               </div>
             </div>
             <div class="rule-actions">
-              <button class="secondary" onclick="toggleRule(${rule.id}, ${!rule.enabled})">
+              <button class="secondary rule-toggle-btn" data-rule-id="${rule.id}" data-new-enabled="${!rule.enabled}">
                 ${rule.enabled ? 'Disable' : 'Enable'}
               </button>
-              <button class="danger" onclick="deleteRule(${rule.id})">Delete</button>
+              <button class="danger rule-delete-btn" data-rule-id="${rule.id}">Delete</button>
             </div>
           </div>
-          ${rule.explanation ? `<p style="margin-top:8px;color:var(--gc-text-dim);font-size:13px;">${rule.explanation}</p>` : ''}
+          ${rule.explanation ? `<p style=\"margin-top:8px;color:var(--gc-text-dim);font-size:13px;\">${rule.explanation}</p>` : ''}
         </div>
       `;
     }).join("");
     
     rulesList.innerHTML = html;
+    attachRuleActionHandlers();
   } catch (e) {
     console.error("Failed to load rules:", e);
     rulesList.innerHTML = '<div class="empty-state">Error loading rules</div>';
   }
+}
+
+function attachRuleActionHandlers() {
+  // Toggle buttons
+  document.querySelectorAll('.rule-toggle-btn').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      const id = parseInt(btn.dataset.ruleId, 10);
+      const newEnabled = btn.dataset.newEnabled === 'true';
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        await toggleRule(id, newEnabled);
+      } finally {
+        // Reload list will redraw buttons; no need to restore text here
+      }
+    });
+  });
+  // Delete buttons
+  document.querySelectorAll('.rule-delete-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const id = parseInt(btn.dataset.ruleId, 10);
+      if (!confirm('Delete this rule?')) return;
+      btn.disabled = true;
+      btn.textContent = '...';
+      try {
+        await deleteRule(id);
+      } finally {
+        // loadRules will refresh UI
+      }
+    });
+  });
 }
 
 function formatTimeWindow(pattern) {
