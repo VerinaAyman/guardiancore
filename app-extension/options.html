@@ -219,14 +219,21 @@
         </div>
         </div>
         
-        <!-- Security Tab -->
+        <!-- Options Tab -->
         <div class="tab-content" id="security-tab" style="display:none;">
           <div class="section">
-            <h3 class="section-title">🔐 PIN Management</h3>
+            <h3 class="section-title">�️ Options</h3>
             <div class="info-box">
-              Your PIN is stored using PBKDF2-HMAC-SHA-256 with 310,000 iterations. No plaintext PIN is ever stored.
+              PIN protected. Recovery codes available if forgotten.
             </div>
-            <button id="change-pin-btn" class="w-full">Change PIN</button>
+            <button id="change-pin-btn" class="w-full" style="margin-bottom:14px;">Change PIN</button>
+            <div class="form-group" style="margin-top:4px;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600;font-size:13px;">
+                <input type="checkbox" id="fast-mode-toggle" style="width:auto;"> Fast Gamification Mode (test only)
+              </label>
+              <small class="note">Accelerates streak (1 minute = 1 hour). Disable for normal use.</small>
+            </div>
+            <div id="options-status" class="status hidden"></div>
           </div>
         </div>
         
