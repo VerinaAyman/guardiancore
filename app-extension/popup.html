@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>GuardianCore</title>
+  <link rel="stylesheet" href="xp.css" />
     <style>
       :root {
         --gc-gradient: linear-gradient(120deg,#4f46e5 0%,#6d28d9 55%,#9333ea 100%);
@@ -115,10 +116,23 @@
             <span class="stat-label">Daily XP</span>
             <span class="stat-value" id="xp-value">0</span>
           </div>
-          <div id="xp-bar" style="height:6px;border-radius:4px;background:#1e293b;overflow:hidden;margin-top:6px;">
-            <div id="xp-bar-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#6366f1,#8b5cf6);transition:width .3s ease;"></div>
+          <div id="xp-bar" class="xp-bar">
+            <div id="xp-bar-fill" class="xp-bar-fill"></div>
           </div>
-          <div id="xp-remaining" style="margin-top:6px;font-size:11px;color:#94a3b8;text-align:center;">100 XP to next level</div>
+          <div id="xp-remaining" class="xp-remaining">100 XP to next level</div>
+          <div id="xp-how" class="xp-how">
+            <strong>How you earn XP:</strong>
+            <ul>
+              <li>+1 per page load</li>
+              <li>+2 if site has CSP</li>
+              <li>+1 if CORS headers present</li>
+              <li>+3 if 0 trackers detected</li>
+              <li>-1 per tracker (up to -5)</li>
+              <li>-5 if a page is blocked / violation</li>
+              <li>Fast Mode (dev) multiplies XP by 3</li>
+            </ul>
+            Level up every 100 XP. XP resets daily; level persists.
+          </div>
         </div>
         
         <div id="blocked-banner" class="blocked-banner hidden">
@@ -201,6 +215,7 @@
           <div class="dev-tools-grid">
             <button id="dev-toggle-fast" class="secondary">Enable Fast Mode</button>
             <button id="dev-violation" class="secondary">Simulate Violation (XP Penalty)</button>
+            <button id="dev-reset-xp" class="secondary">Reset XP</button>
             <div id="dev-status" class="status hidden dev-status"></div>
           </div>
         </div>

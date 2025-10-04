@@ -327,9 +327,12 @@ chrome.webNavigation.onCompleted.addListener(async (nav) => {
       client: { ua_major: navigator.userAgentData?.brands?.[0]?.version || "n/a" }
     };
 
-    // Reset counters
-    st.trackerCount = 0;
-    st.trackersByCategory = {};
+  // Capture metrics before reset for XP logic
+  const navTrackers = st.trackerCount;
+  const navTrackersByCat = { ...st.trackersByCategory };
+  // Reset for next navigation
+  st.trackerCount = 0;
+  st.trackersByCategory = {};
 
     const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(["gc_backend_url", "gc_api_token"]);
     if (!gc_backend_url) return;
@@ -348,7 +351,7 @@ chrome.webNavigation.onCompleted.addListener(async (nav) => {
 
     // Local fast-feedback XP award
     awardXp({
-      trackers: st.trackerCount,
+      trackers: navTrackers,
       csp: record.policy_state.csp_present,
       cors: record.policy_state.cors_signals,
       blocked: record.policy_state.blocked,

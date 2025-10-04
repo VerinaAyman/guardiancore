@@ -157,7 +157,7 @@ function toggleDevTools() {
 function attachDevToolsHandlers() {
   const fastBtn = document.getElementById('dev-toggle-fast');
   const vioBtn = document.getElementById('dev-violation');
-  const addBtn = document.getElementById('dev-add-safe');
+  const resetXpBtn = document.getElementById('dev-reset-xp');
   // Removed risk refresh & streak manipulation controls
   // Optionally add a reset XP button if dev tools present in future
   const statusEl = document.getElementById('dev-status');
@@ -182,6 +182,12 @@ function attachDevToolsHandlers() {
   if (vioBtn) vioBtn.addEventListener('click', () => {
     chrome.runtime.sendMessage({ type: 'DEV_SIMULATE_VIOLATION' }, () => {
       setStatus('Simulated violation (XP penalty applied)', 'status-warning');
+      requestXpState();
+    });
+  });
+  if (resetXpBtn) resetXpBtn.addEventListener('click', () => {
+    chrome.runtime.sendMessage({ type: 'DEV_RESET_XP' }, () => {
+      setStatus('XP reset', 'status-info');
       requestXpState();
     });
   });
