@@ -225,10 +225,8 @@ async function forgotPIN() {
     return;
   }
   
-  const hashedPin = await crypto.hashPin(newPin);
-  await chrome.storage.local.set({ pin: hashedPin });
-  
-  alert("✅ PIN reset successfully!");
+  await crypto.storePin(newPin);
+  alert("✅ PIN reset successfully! New PIN stored.");
   
   // Auto-unlock
   showMainContent();
@@ -243,7 +241,20 @@ function setupButtonHandlers() {
   
   // Change PIN
   document.getElementById("change-pin-btn")?.addEventListener("click", changePIN);
-  document.getElementById("change-pin-inline-btn")?.addEventListener("click", changePIN);
+  // Fast mode toggle
+  const fastToggle = document.getElementById("fast-mode-toggle");
+  if (fastToggle) {
+    chrome.storage.local.get(["gc_fast_mode"]).then(({ gc_fast_mode }) => {
+      fastToggle.checked = !!gc_fast_mode;
+    });
+    fastToggle.addEventListener("change", () => {
+      chrome.storage.local.set({ gc_fast_mode: fastToggle.checked }).then(() => {
+        showStatus("options-status", fastToggle.checked ? "Fast mode enabled" : "Fast mode disabled", "info");
+        // Notify background to pick up change immediately
+        chrome.runtime.sendMessage({ type: "DEV_TOGGLE_FAST_MODE" });
+      });
+    });
+  }
   
   // Regenerate recovery codes
   document.getElementById("regenerate-codes-btn")?.addEventListener("click", regenerateRecoveryCodes);
@@ -404,7 +415,6 @@ function formatTimeWindow(pattern) {
 async function addRule() {
   const ruleType = document.getElementById("rule-type").value;
   const pattern = document.getElementById("rule-pattern").value.trim();
-  const explanation = document.getElementById("rule-explanation").value.trim();
   
   if (!pattern) {
     showStatus("add-rule-status", "Pattern is required", "error");
@@ -431,7 +441,7 @@ async function addRule() {
       body: JSON.stringify({
         rule_type: ruleType,
         pattern: pattern,
-        explanation: explanation || null,
+  explanation: null,
         enabled: true
       })
     });
@@ -440,7 +450,7 @@ async function addRule() {
     
     showStatus("add-rule-status", "✅ Rule created successfully", "success");
     document.getElementById("rule-pattern").value = "";
-    document.getElementById("rule-explanation").value = "";
+  // Explanation field removed
     loadRules();
   } catch (e) {
     console.error("Failed to add rule:", e);
@@ -523,11 +533,8 @@ async function changePIN() {
     alert("PINs don't match");
     return;
   }
-  
-  const hashedPin = await crypto.hashPin(newPin);
-  await chrome.storage.local.set({ pin: hashedPin });
-  
-  alert("✅ PIN changed successfully!");
+  await crypto.storePin(newPin);
+  alert("✅ PIN changed successfully! New PIN is active.");
 }
 
 async function loadRecoveryStatus() {

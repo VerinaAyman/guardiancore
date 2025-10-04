@@ -117,7 +117,7 @@
       <!-- Tabs Navigation -->
       <div style="display:flex;gap:8px;padding:20px 20px 0;border-bottom:1px solid #2a3a4c;">
         <button class="tab-btn active" data-tab="rules" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Rules</button>
-        <button class="tab-btn" data-tab="security" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Security</button>
+  <button class="tab-btn" data-tab="security" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Options</button>
         <button class="tab-btn" data-tab="recovery" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Recovery Codes</button>
         <button class="tab-btn" data-tab="export" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Export/Import</button>
         <button class="tab-btn" data-tab="about" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">About</button>
@@ -140,10 +140,6 @@
           <div class="form-group">
             <label>API Token</label>
             <input type="password" id="api-token" placeholder="dev-token-123">
-          </div>
-          <div class="form-group" style="margin-top:6px;">
-            <button id="change-pin-inline-btn" type="button">Change PIN</button>
-            <small class="note">PIN is stored securely (PBKDF2 hashed). Use this to rotate it.</small>
           </div>
           <button id="save-backend-btn">Save Backend Settings</button>
           <div id="backend-status" class="status hidden"></div>
@@ -207,10 +203,7 @@
               <input type="text" id="rule-category" placeholder="e.g., social_media, education, gaming">
             </div>
 
-            <div class="form-group">
-              <label>Explanation (shown when blocked)</label>
-              <textarea id="rule-explanation" placeholder="Explain why this rule exists..."></textarea>
-            </div>
+            <!-- Explanation removed for security -->
 
             <button id="add-rule-btn">Add Rule</button>
             <div id="add-rule-status" class="status hidden"></div>
