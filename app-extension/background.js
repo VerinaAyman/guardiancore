@@ -44,10 +44,12 @@ const tabState = new Map(); // tabId -> { trackerCount, trackersByCategory, last
 
 // Gamification state (local only)
 let gamificationState = {
-  lastViolation: null,  // Timestamp of last blocked event
-  safeStreakHours: 0,   // Hours since last violation
-  riskScore: 0,         // Cached from backend
-  lastRiskUpdate: 0     // Timestamp of last risk fetch
+  lastViolation: null,      // Timestamp of last blocked event
+  safeStreakHours: 0,       // Derived display value
+  riskScore: 0,
+  lastRiskUpdate: 0,
+  activeAccumulatedMs: 0,   // Tracked active browsing milliseconds since lastViolation (or start)
+  lastActivityTs: null      // Last timestamp we considered user active
 };
 
 function ensureTab(tid) {
@@ -232,7 +234,8 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
     // Track violation for gamification
     gamificationState.lastViolation = Date.now();
     gamificationState.safeStreakHours = 0;
-    await chrome.storage.local.set({ lastViolation: gamificationState.lastViolation });
+    gamificationState.activeAccumulatedMs = 0; // reset active time
+    await chrome.storage.local.set({ lastViolation: gamificationState.lastViolation, gc_active_ms: 0 });
     
     // Notify UIs about streak reset
     chrome.runtime.sendMessage({
@@ -246,6 +249,10 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
       `?reason=${encodeURIComponent(enforcement.reason)}` +
       `&category=${encodeURIComponent(enforcement.rule.category || "restricted")}`;
     chrome.tabs.update(details.tabId, { url: blockUrl });
+  } else {
+    // Count navigation as activity
+    markUserActive();
+    updateSafeStreak();
   }
 });
 
@@ -255,6 +262,10 @@ chrome.webNavigation.onCompleted.addListener(async (nav) => {
     const st = ensureTab(nav.tabId);
     const tab = await chrome.tabs.get(nav.tabId);
     if (!tab?.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) return;
+
+    // Mark activity on successful load
+    markUserActive();
+    updateSafeStreak();
 
     const origin = new URL(tab.url).origin;
     const originHash = await sha256Hex(origin);
@@ -362,29 +373,62 @@ async function fetchStats() {
 
 // Update safe streak calculation - tracks active browsing time
 function updateSafeStreak() {
-  // Get browser start time and last violation
-  chrome.storage.local.get(["browserStartTime", "lastViolation"]).then(({ browserStartTime, lastViolation }) => {
+  chrome.storage.local.get(["browserStartTime", "lastViolation", "gc_active_ms"]).then(({ browserStartTime, lastViolation, gc_active_ms }) => {
     const now = Date.now();
-    const timeUnitMs = fastMode ? (1000 * 60) : (1000 * 60 * 60); // minute vs hour
-    
-    // Initialize browser start time if not set
     if (!browserStartTime) {
-      chrome.storage.local.set({ browserStartTime: now });
-      gamificationState.safeStreakHours = 0;
-      return;
+      browserStartTime = now;
+      chrome.storage.local.set({ browserStartTime });
     }
-    
-    // If there's a recent violation, calculate from violation time
-    if (lastViolation && lastViolation > browserStartTime) {
-      const hoursSinceViolation = Math.floor((now - lastViolation) / timeUnitMs);
-      gamificationState.safeStreakHours = Math.min(hoursSinceViolation, 999);
+
+    if (gc_active_ms && !gamificationState.activeAccumulatedMs) {
+      gamificationState.activeAccumulatedMs = gc_active_ms; // restore persisted
+    }
+
+    // Rebase accumulated time if violation happened
+    if (lastViolation) {
       gamificationState.lastViolation = lastViolation;
-    } else {
-      // No violations or old violation - calculate from browser start
-      const hoursSinceStart = Math.floor((now - browserStartTime) / timeUnitMs);
-      gamificationState.safeStreakHours = Math.min(hoursSinceStart, 999);
+      // If violation after last activity accumulation, and we previously counted time before violation, reset
+      if (lastViolation > browserStartTime) {
+        // Keep only active time since violation
+        // If lastViolation > now (clock changed) clamp
+        if (gamificationState.lastActivityTs && gamificationState.lastActivityTs < lastViolation) {
+          gamificationState.activeAccumulatedMs = 0;
+        }
+      }
     }
+
+    const timeUnitMs = fastMode ? (1000 * 60) : (1000 * 60 * 60); // minute or hour units
+    gamificationState.safeStreakHours = Math.min(Math.floor(gamificationState.activeAccumulatedMs / timeUnitMs), 999);
   });
+}
+
+// Track activity: consider navigation complete, focused window, or periodic ticks as activity
+function markUserActive() {
+  const now = Date.now();
+  if (!gamificationState.lastActivityTs) {
+    gamificationState.lastActivityTs = now;
+    return;
+  }
+  const delta = now - gamificationState.lastActivityTs;
+  // If delta reasonable (<15 min inactivity gap), accumulate
+  if (delta < 15 * 60 * 1000) {
+    gamificationState.activeAccumulatedMs += delta;
+  }
+  gamificationState.lastActivityTs = now;
+  chrome.storage.local.set({ gc_active_ms: gamificationState.activeAccumulatedMs });
+}
+
+// Periodic heartbeat to accumulate time even if page static
+const heartbeatIntervalMsBase = 5 * 60 * 1000; // 5 mins real mode
+let heartbeatTimer = null;
+function startHeartbeat() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  const interval = fastMode ? 10 * 1000 : heartbeatIntervalMsBase; // 10s in fast mode
+  heartbeatTimer = setInterval(() => {
+    markUserActive();
+    updateSafeStreak();
+    chrome.runtime.sendMessage({ type: "nudge:streak", hours: gamificationState.safeStreakHours }).catch(() => {});
+  }, interval);
 }
 
 function calculateStreak() {
@@ -459,6 +503,7 @@ chrome.runtime.onInstalled.addListener(() => {
   fetchRules();
   updateSafeStreak();
   scheduleBackgroundUpdate();
+  startHeartbeat();
 });
 
 chrome.runtime.onStartup.addListener(() => {
@@ -466,6 +511,7 @@ chrome.runtime.onStartup.addListener(() => {
   fetchRules();
   updateSafeStreak();
   scheduleBackgroundUpdate();
+  startHeartbeat();
 });
 
 // When popup opens, trigger immediate refresh
