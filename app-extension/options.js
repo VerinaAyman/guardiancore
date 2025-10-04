@@ -243,6 +243,7 @@ function setupButtonHandlers() {
   
   // Change PIN
   document.getElementById("change-pin-btn")?.addEventListener("click", changePIN);
+  document.getElementById("change-pin-inline-btn")?.addEventListener("click", changePIN);
   
   // Regenerate recovery codes
   document.getElementById("regenerate-codes-btn")?.addEventListener("click", regenerateRecoveryCodes);
@@ -376,7 +377,7 @@ function attachRuleActionHandlers() {
   document.querySelectorAll('.rule-delete-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
       const id = parseInt(btn.dataset.ruleId, 10);
-      // Single confirmation handled inside deleteRule() already
+      if (!confirm('Delete this rule?')) return;
       btn.disabled = true;
       btn.textContent = '...';
       try {

@@ -141,12 +141,9 @@
             <label>API Token</label>
             <input type="password" id="api-token" placeholder="dev-token-123">
           </div>
-          <div class="form-group">
-            <label>Parent PIN (4 digits)</label>
-            <input type="password" id="parent-pin" placeholder="1234" maxlength="4" pattern="[0-9]{4}">
-            <small class="note">
-              Required to access this settings page
-            </small>
+          <div class="form-group" style="margin-top:6px;">
+            <button id="change-pin-inline-btn" type="button">Change PIN</button>
+            <small class="note">PIN is stored securely (PBKDF2 hashed). Use this to rotate it.</small>
           </div>
           <button id="save-backend-btn">Save Backend Settings</button>
           <div id="backend-status" class="status hidden"></div>
