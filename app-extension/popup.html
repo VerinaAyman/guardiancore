@@ -66,6 +66,17 @@
       .status-success{background:rgba(16,185,129,.15);color:var(--gc-success);} 
       .status-error{background:rgba(239,68,68,.15);color:var(--gc-danger);} 
       .status-info{background:rgba(99,102,241,.15);color:var(--gc-accent);} 
+      /* Gamification Week 4 */
+      .gamification-section{background:linear-gradient(145deg,#1f3d2d,#173020) !important;}
+      .gamification-title{color:#86efac !important;}
+      .safe-streak-value{color:#34d399 !important;}
+      .streak-label{font-size:10px;color:#86efac;margin-left:4px;}
+      .risk-low{color:#34d399 !important;}
+      .risk-medium{color:#fbbf24 !important;}
+      .risk-high{color:#ef4444 !important;}
+      .compliant-msg{margin-top:10px;padding:8px;background:rgba(52,211,153,0.1);border-radius:8px;font-size:11px;color:#6ee7b7;text-align:center;}
+      .time-nudge{margin-top:10px;padding:8px;background:rgba(245,158,11,0.15);border-radius:8px;font-size:11px;color:#fbbf24;text-align:center;}
+      .message-warning{background:rgba(239,68,68,0.15) !important;color:#fca5a5 !important;}
       footer{margin-top:4px;padding:6px 0 10px;text-align:center;font-size:10px;color:#475569;letter-spacing:.08em;} 
       footer span{color:#64748b;}
       @media (prefers-color-scheme: light){body{background:#f1f5f9;color:#0f172a;} .header{background:var(--gc-gradient);} .tab{background:#ffffff;color:#475569;} .section{background:#ffffff;border-color:#e2e8f0;} .badge{background:#e2e8f0;color:#475569;} }
@@ -86,7 +97,26 @@
     <div class="content">
       <!-- Status Tab -->
       <div class="tab-content active" id="status-tab">
-  <div id="blocked-banner" class="blocked-banner hidden">
+        <!-- Gamification Cues (Week 4) -->
+        <div class="section gamification-section">
+          <h3 class="section-title gamification-title">🎯 Your Activity</h3>
+          <div class="stat-row">
+            <span class="stat-label">Safe Streak</span>
+            <span class="stat-value safe-streak-value" id="safe-streak-hours">0</span>
+            <span class="streak-label">hours</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Risk Score</span>
+            <span class="stat-value risk-low" id="risk-score-value">0</span>
+          </div>
+          <div id="compliant-message" class="hidden compliant-msg">
+            Great job! Keep up the safe browsing.
+          </div>
+          <div id="time-nudge" class="hidden time-nudge">
+          </div>
+        </div>
+        
+        <div id="blocked-banner" class="blocked-banner hidden">
           <div class="title">🛡️ Content Blocked</div>
           <div class="reason" id="blocked-reason"></div>
         </div>
@@ -107,12 +137,7 @@
           </div>
         </div>
 
-        <div class="section">
-          <h3 class="section-title">Active Rules</h3>
-          <div id="active-rules">
-            <div class="empty-state">Loading rules...</div>
-          </div>
-        </div>
+        <!-- Active Rules section removed for security - don't show rules to child -->
       </div>
 
       <!-- Stats Tab -->

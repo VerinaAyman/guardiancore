@@ -102,26 +102,35 @@
         <h2>Parent Access Required</h2>
         <p>Enter your PIN to manage parental controls</p>
         <div class="form-group">
-          <input type="password" id="pin-input" placeholder="Enter 4-digit PIN" maxlength="4" pattern="[0-9]{4}">
+          <input type="password" id="pin-input" placeholder="Enter PIN" maxlength="8">
         </div>
-  <button id="unlock-btn" class="w-full">Unlock</button>
-        <div id="pin-status" class="status hidden"></div>
-  <p class="mt-20 note">
-          Default PIN: <strong>1234</strong><br>
-          Change it in Backend Settings below
-        </p>
+        <button id="unlock-btn" class="w-full">Unlock</button>
+        <div id="pin-error" class="status status-error hidden"></div>
+        <button id="forgot-pin-btn" class="secondary" style="margin-top:10px;">Forgot PIN?</button>
+        <p id="pin-hint" class="mt-20 note" style="margin-top:20px;color:var(--gc-text-dim);font-size:13px;"></p>
       </div>
     </div>
 
     <!-- Main Content -->
+        <!-- Main Content (locked until PIN verified) -->
     <div id="main-content" class="container hidden">
+      <!-- Tabs Navigation -->
+      <div style="display:flex;gap:8px;padding:20px 20px 0;border-bottom:1px solid #2a3a4c;">
+        <button class="tab-btn active" data-tab="rules" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Rules</button>
+        <button class="tab-btn" data-tab="security" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Security</button>
+        <button class="tab-btn" data-tab="recovery" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Recovery Codes</button>
+        <button class="tab-btn" data-tab="export" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">Export/Import</button>
+        <button class="tab-btn" data-tab="about" style="padding:10px 20px;background:transparent;border:none;cursor:pointer;font-weight:600;transition:all 0.3s;">About</button>
+      </div>
       <div class="header">
         <h1>GuardianCore Parent Settings</h1>
         <div class="subtitle">Manage parental controls and rules</div>
       </div>
 
       <div class="content">
-        <!-- Backend Settings -->
+        <!-- Rules Tab -->
+        <div class="tab-content" id="rules-tab" style="display:block;">
+        <!-- Backend Configuration -->
         <div class="section">
           <h3 class="section-title">⚙️ Backend Configuration</h3>
           <div class="form-group">
@@ -218,9 +227,86 @@
           
           <button id="refresh-rules-btn" class="secondary mt-16">Refresh Rules</button>
         </div>
+        </div>
+        
+        <!-- Security Tab -->
+        <div class="tab-content" id="security-tab" style="display:none;">
+          <div class="section">
+            <h3 class="section-title">🔐 PIN Management</h3>
+            <div class="info-box">
+              Your PIN is stored using PBKDF2-HMAC-SHA-256 with 310,000 iterations. No plaintext PIN is ever stored.
+            </div>
+            <button id="change-pin-btn" class="w-full">Change PIN</button>
+          </div>
+        </div>
+        
+        <!-- Recovery Codes Tab -->
+        <div class="tab-content" id="recovery-tab" style="display:none;">
+          <div class="section">
+            <h3 class="section-title">🔑 Recovery Codes</h3>
+            <div class="info-box">
+              Recovery codes allow you to reset your PIN if you forget it. Each code can only be used once.
+              Store them securely offline.
+            </div>
+            <div id="recovery-status" class="mb-16">
+              <div class="empty-state">Recovery codes status will appear here after unlocking</div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+              <button id="download-codes-btn" class="secondary">Download Codes</button>
+              <button id="regenerate-codes-btn" class="danger">Regenerate Codes</button>
+            </div>
+            <div id="recovery-status-msg" class="status hidden"></div>
+          </div>
+        </div>
+        
+        <!-- Export/Import Tab -->
+        <div class="tab-content" id="export-tab" style="display:none;">
+          <div class="section">
+            <h3 class="section-title">📤 Export Rules</h3>
+            <p style="margin-bottom:16px;color:var(--gc-text-dim);font-size:14px;">Download all rules as JSON for backup or transfer.</p>
+            <button id="export-rules-btn" class="w-full">Export All Rules</button>
+            <div id="export-status" class="status hidden"></div>
+          </div>
+          
+          <div class="section">
+            <h3 class="section-title">📥 Import Rules</h3>
+            <p style="margin-bottom:16px;color:var(--gc-text-dim);font-size:14px;">Import rules from a JSON file. This will add to existing rules.</p>
+            <input type="file" id="import-file-input" accept=".json" style="display:none;">
+            <button id="import-rules-btn" class="w-full">Import Rules</button>
+            <div id="import-status" class="status hidden"></div>
+          </div>
+          
+          <div class="section">
+            <h3 class="section-title">⚠️ Factory Reset</h3>
+            <div class="info-box" style="background:rgba(239,68,68,0.1);border-color:rgba(239,68,68,0.3);">
+              <strong>Warning:</strong> This will erase local rules cache, PIN, and recovery codes from this browser profile. This cannot be undone.
+            </div>
+            <button id="factory-reset-btn" class="danger w-full">Factory Reset</button>
+          </div>
+        </div>
+        
+        <!-- About Tab -->
+        <div class="tab-content" id="about-tab" style="display:none;">
+          <div class="section">
+            <h3 class="section-title">ℹ️ About GuardianCore</h3>
+            <div class="panel">
+              <p style="margin-bottom:12px;"><strong>Version:</strong> 0.4.0 (Week 4)</p>
+              <p style="margin-bottom:12px;"><strong>Features:</strong></p>
+              <ul style="margin-left:20px;color:var(--gc-text-dim);line-height:1.8;">
+                <li>Privacy-focused audit monitoring</li>
+                <li>Parental control rules (allowlist/blocklist/time windows)</li>
+                <li>Risk scoring and gamification cues</li>
+                <li>Hardened PIN storage (PBKDF2-SHA-256)</li>
+                <li>10 recovery codes with secure hashing</li>
+                <li>Export/import rules</li>
+                <li>GDPR-safe by design</li>
+              </ul>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <script src="options.js"></script>
+    <script type="module" src="options.js"></script>
   </body>
 </html>

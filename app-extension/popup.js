@@ -1,6 +1,24 @@
-// GuardianCore Popup
+// GuardianCore Popup - Week 4: Child-facing with gamification cues
+// Import strings module (inline for now)
+const strings = {
+  safe_streak: "Safe Streak",
+  safe_streak_hours: "hours without violations",
+  risk_score: "Risk Score",
+  compliant_message: "Great job! Keep up the safe browsing.",
+  child_view_message: "This is your activity summary. For changes, ask a parent.",
+  settings_open_options: "Open Parent Settings"
+};
 
-console.log("[Popup] Script starting...");
+console.log("[Popup] Script starting v0.4.0...");
+
+// Establish persistent connection for real-time updates
+let port = null;
+try {
+  port = chrome.runtime.connect({ name: "popup" });
+  console.log("[Popup] Connected to background");
+} catch (e) {
+  console.error("[Popup] Failed to connect:", e);
+}
 
 document.addEventListener("DOMContentLoaded", () => {
   console.log("[Popup] DOM Content Loaded");
@@ -28,11 +46,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Initialize
   console.log("[Popup] Starting initialization...");
+  // Load gamification state first (child-facing)
+  loadGamificationState().catch(e => console.error("[Popup] loadGamification error:", e));
   // We still load settings to display current configuration but make inputs read-only
   loadSettings().catch(e => console.error("[Popup] loadSettings error:", e));
   loadCurrentTab().catch(e => console.error("[Popup] loadCurrentTab error:", e));
-  loadActiveRules().catch(e => console.error("[Popup] loadActiveRules error:", e));
+  // Removed loadActiveRules() - security: don't show rules to child
   loadStats().catch(e => console.error("[Popup] loadStats error:", e));
+  
+  // Listen for real-time updates from background
+  chrome.runtime.onMessage.addListener(handleBackgroundMessage);
 
   // Save settings button
   const saveBtn = document.getElementById("save-settings");
@@ -76,6 +99,90 @@ document.addEventListener("DOMContentLoaded", () => {
   console.log("[Popup] Initialization complete");
 });
 
+// Load gamification state (child-facing cues)
+async function loadGamificationState() {
+  try {
+    chrome.runtime.sendMessage({ type: "GET_GAMIFICATION_STATE" }, (state) => {
+      if (!state) return;
+      
+      // Update safe streak display
+      const streakEl = document.getElementById("safe-streak-hours");
+      if (streakEl) {
+        streakEl.textContent = state.safeStreakHours || 0;
+      }
+      
+      // Update risk score display
+      const riskEl = document.getElementById("risk-score-value");
+      if (riskEl) {
+        riskEl.textContent = state.riskScore || 0;
+        
+        // Color code risk score
+        const scoreNum = state.riskScore || 0;
+        if (scoreNum < 30) {
+          riskEl.className = "risk-low";
+        } else if (scoreNum < 70) {
+          riskEl.className = "risk-medium";
+        } else {
+          riskEl.className = "risk-high";
+        }
+      }
+      
+      // Show compliant message if streak is good
+      const messageEl = document.getElementById("compliant-message");
+      if (messageEl && state.safeStreakHours >= 12) {
+        messageEl.textContent = strings.compliant_message;
+        messageEl.classList.remove("hidden");
+      }
+    });
+    
+    // Check for time-left nudges
+    chrome.runtime.sendMessage({ type: "CHECK_TIME_NUDGE" });
+  } catch (e) {
+    console.error("[Gamification] Load error:", e);
+  }
+}
+
+// Handle real-time messages from background
+function handleBackgroundMessage(message, sender, sendResponse) {
+  console.log("[Popup] Message received:", message.type);
+  
+  if (message.type === "risk:update") {
+    const riskEl = document.getElementById("risk-score-value");
+    if (riskEl) {
+      riskEl.textContent = message.score || 0;
+    }
+  } else if (message.type === "nudge:streak") {
+    const streakEl = document.getElementById("safe-streak-hours");
+    if (streakEl) {
+      streakEl.textContent = message.hours || 0;
+    }
+    
+    if (message.violation) {
+      // Show violation notification
+      const messageEl = document.getElementById("compliant-message");
+      if (messageEl) {
+        messageEl.textContent = "Safe streak reset due to violation";
+        messageEl.className = "message-warning";
+        messageEl.classList.remove("hidden");
+      }
+    }
+  } else if (message.type === "nudge:timeleft") {
+    // Show time-left nudge
+    const nudgeEl = document.getElementById("time-nudge");
+    if (nudgeEl) {
+      nudgeEl.textContent = `Time restriction starts in ${message.minutes} minutes`;
+      nudgeEl.classList.remove("hidden");
+      
+      // Auto-hide after 10 seconds
+      setTimeout(() => {
+        nudgeEl.classList.add("hidden");
+      }, 10000);
+    }
+  } else if (message.type === "stats:update") {
+    updateStatsDisplay(message.stats);
+  }
+}
+
 async function loadSettings() {
   const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(["gc_backend_url", "gc_api_token"]);
   if (gc_backend_url) document.getElementById("backend-url").value = gc_backend_url;
@@ -90,6 +197,16 @@ function openParentSettings() {
   } else {
     window.open(chrome.runtime.getURL('options.html'));
   }
+}
+
+function updateStatsDisplay(stats) {
+  const totalEl = document.getElementById("stat-total");
+  const uniqueEl = document.getElementById("stat-unique");
+  const trackersEl = document.getElementById("stat-trackers");
+  
+  if (totalEl) totalEl.textContent = stats.total_audits || 0;
+  if (uniqueEl) uniqueEl.textContent = stats.unique_origins || 0;
+  if (trackersEl) trackersEl.textContent = (stats.avg_trackers || 0).toFixed(2);
 }
 
 async function loadCurrentTab() {

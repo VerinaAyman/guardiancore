@@ -79,9 +79,15 @@ function setupTabs() {
     tab.addEventListener("click", () => {
       const targetTab = tab.dataset.tab;
       
-      // Update active tab button
-      document.querySelectorAll(".tab-btn").forEach(t => t.classList.remove("active"));
+      // Update active tab button with CSS
+      document.querySelectorAll(".tab-btn").forEach(t => {
+        t.classList.remove("active");
+        t.style.borderBottom = "2px solid transparent";
+        t.style.color = "var(--gc-text-dim)";
+      });
       tab.classList.add("active");
+      tab.style.borderBottom = "2px solid var(--gc-accent)";
+      tab.style.color = "var(--gc-accent)";
       
       // Update active tab content
       document.querySelectorAll(".tab-content").forEach(c => c.style.display = "none");
@@ -329,7 +335,10 @@ async function loadRules() {
               </div>
             </div>
             <div class="rule-actions">
-              <button class="secondary" onclick="deleteRule(${rule.id})">Delete</button>
+              <button class="secondary" onclick="toggleRule(${rule.id}, ${!rule.enabled})">
+                ${rule.enabled ? 'Disable' : 'Enable'}
+              </button>
+              <button class="danger" onclick="deleteRule(${rule.id})">Delete</button>
             </div>
           </div>
           ${rule.explanation ? `<p style="margin-top:8px;color:var(--gc-text-dim);font-size:13px;">${rule.explanation}</p>` : ''}
@@ -403,6 +412,32 @@ async function addRule() {
   }
 }
 
+async function toggleRule(ruleId, enable) {
+  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
+    "gc_backend_url",
+    "gc_api_token"
+  ]);
+  
+  try {
+    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}/`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${gc_api_token}`
+      },
+      body: JSON.stringify({ enabled: enable })
+    });
+    
+    if (!response.ok) throw new Error("Failed to toggle rule");
+    
+    loadRules();
+    chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
+  } catch (e) {
+    console.error("Failed to toggle rule:", e);
+    alert("Failed to toggle rule");
+  }
+}
+
 async function deleteRule(ruleId) {
   if (!confirm("Delete this rule?")) return;
   
@@ -422,13 +457,15 @@ async function deleteRule(ruleId) {
     if (!response.ok) throw new Error("Failed to delete rule");
     
     loadRules();
+    chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
   } catch (e) {
     console.error("Failed to delete rule:", e);
     alert("Failed to delete rule");
   }
 }
 
-// Make deleteRule global
+// Make functions global
+window.toggleRule = toggleRule;
 window.deleteRule = deleteRule;
 
 async function changePIN() {
@@ -567,7 +604,7 @@ async function exportRules() {
   }
   
   try {
-    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/export`, {
+    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/all/export`, {
       headers: {
         "Authorization": `Bearer ${gc_api_token}`
       }
@@ -617,7 +654,7 @@ async function importRules(event) {
         return;
       }
       
-      const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/import`, {
+      const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/all/import`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

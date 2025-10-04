@@ -38,12 +38,36 @@ rules = Table(
     Column("category", Text, nullable=True),  # e.g., 'social_media', 'advertising'
     Column("explanation", Text, nullable=True),  # Human-readable explanation
     Column("enabled", Boolean, nullable=False, server_default="true"),
+    Column("bundle_id", Text, nullable=True),  # UUID for rule bundles
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
 )
 
 Index("idx_rules_type", rules.c.rule_type)
 Index("idx_rules_enabled", rules.c.enabled)
+Index("idx_rules_bundle", rules.c.bundle_id)
+
+# Rule schedules table (multiple intervals per rule)
+rules_schedules = Table(
+    "rules_schedules", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("rule_id", BigInteger, nullable=False),
+    Column("weekday", Integer, nullable=False),  # 0=Sunday, 6=Saturday
+    Column("start_time", Text, nullable=False),  # HH:MM format
+    Column("end_time", Text, nullable=False),  # HH:MM format
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
+
+Index("idx_schedules_rule", rules_schedules.c.rule_id)
+
+# Rule bundles table (for grouping rules)
+rule_bundles = Table(
+    "rule_bundles", metadata,
+    Column("id", Text, primary_key=True),  # UUID
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=True),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
 
 # Throttling table to prevent duplicate submissions
 submit_throttle = Table(

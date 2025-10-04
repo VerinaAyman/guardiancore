@@ -1,32 +1,41 @@
 // GuardianCore Audit Probe - Background Service Worker with Rule Enforcement
-console.log("GuardianCore Audit Probe v0.3.0 loaded");
+// Week 4: Real-time updates, gamification cues, risk scoring
+console.log("GuardianCore Audit Probe v0.4.0 loaded");
 
 // Expanded tracker list with categories
 const TRACKERS = {
-  "google-analytics.com": { category: "analytics", name: "Google Analytics" },
-  "doubleclick.net": { category: "advertising", name: "DoubleClick" },
-  "facebook.net": { category: "social_media", name: "Facebook" },
-  "googletagmanager.com": { category: "analytics", name: "Google Tag Manager" },
-  "adservice.google.com": { category: "advertising", name: "Google Ads" },
-  "googlesyndication.com": { category: "advertising", name: "Google AdSense" },
-  "googleadservices.com": { category: "advertising", name: "Google Ad Services" },
-  "facebook.com": { category: "social_media", name: "Facebook" },
-  "connect.facebook.net": { category: "social_media", name: "Facebook Connect" },
-  "analytics.google.com": { category: "analytics", name: "Google Analytics" },
-  "googletagservices.com": { category: "advertising", name: "Google Tag Services" },
-  "twitter.com": { category: "social_media", name: "Twitter" },
-  "instagram.com": { category: "social_media", name: "Instagram" },
-  "tiktok.com": { category: "social_media", name: "TikTok" },
-  "snapchat.com": { category: "social_media", name: "Snapchat" },
-  "youtube.com": { category: "video", name: "YouTube" },
-  "amazon-adsystem.com": { category: "advertising", name: "Amazon Ads" },
-  "criteo.com": { category: "advertising", name: "Criteo" },
-  "outbrain.com": { category: "advertising", name: "Outbrain" },
-  "taboola.com": { category: "advertising", name: "Taboola" }
+  "google-analytics.com": { category: "analytics", name: "Google Analytics", risk: "medium" },
+  "doubleclick.net": { category: "advertising", name: "DoubleClick", risk: "high" },
+  "facebook.net": { category: "social_media", name: "Facebook", risk: "high" },
+  "googletagmanager.com": { category: "analytics", name: "Google Tag Manager", risk: "medium" },
+  "adservice.google.com": { category: "advertising", name: "Google Ads", risk: "high" },
+  "googlesyndication.com": { category: "advertising", name: "Google AdSense", risk: "high" },
+  "googleadservices.com": { category: "advertising", name: "Google Ad Services", risk: "high" },
+  "facebook.com": { category: "social_media", name: "Facebook", risk: "high" },
+  "connect.facebook.net": { category: "social_media", name: "Facebook Connect", risk: "high" },
+  "analytics.google.com": { category: "analytics", name: "Google Analytics", risk: "medium" },
+  "googletagservices.com": { category: "advertising", name: "Google Tag Services", risk: "high" },
+  "twitter.com": { category: "social_media", name: "Twitter", risk: "medium" },
+  "instagram.com": { category: "social_media", name: "Instagram", risk: "medium" },
+  "tiktok.com": { category: "social_media", name: "TikTok", risk: "medium" },
+  "snapchat.com": { category: "social_media", name: "Snapchat", risk: "medium" },
+  "youtube.com": { category: "video", name: "YouTube", risk: "low" },
+  "amazon-adsystem.com": { category: "advertising", name: "Amazon Ads", risk: "high" },
+  "criteo.com": { category: "advertising", name: "Criteo", risk: "high" },
+  "outbrain.com": { category: "advertising", name: "Outbrain", risk: "high" },
+  "taboola.com": { category: "advertising", name: "Taboola", risk: "high" }
 };
 
 // In-memory per-tab state
 const tabState = new Map(); // tabId -> { trackerCount, trackersByCategory, lastCsp, lastCors, blocked }
+
+// Gamification state (local only)
+let gamificationState = {
+  lastViolation: null,  // Timestamp of last blocked event
+  safeStreakHours: 0,   // Hours since last violation
+  riskScore: 0,         // Cached from backend
+  lastRiskUpdate: 0     // Timestamp of last risk fetch
+};
 
 function ensureTab(tid) {
   if (!tabState.has(tid)) {
@@ -207,6 +216,18 @@ chrome.webNavigation.onBeforeNavigate.addListener(async (details) => {
   
   const enforcement = enforceRules(details.url, details.tabId);
   if (enforcement.blocked) {
+    // Track violation for gamification
+    gamificationState.lastViolation = Date.now();
+    gamificationState.safeStreakHours = 0;
+    await chrome.storage.local.set({ lastViolation: gamificationState.lastViolation });
+    
+    // Notify UIs about streak reset
+    chrome.runtime.sendMessage({
+      type: "nudge:streak",
+      hours: 0,
+      violation: true
+    }).catch(() => {});
+    
     // Redirect to blocking page with explanation
     const blockUrl = chrome.runtime.getURL("blocked.html") + 
       `?reason=${encodeURIComponent(enforcement.reason)}` +
@@ -267,18 +288,176 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   tabState.delete(tabId);
 });
 
+// Fetch risk score from backend
+async function fetchRiskScore() {
+  try {
+    const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(["gc_backend_url", "gc_api_token"]);
+    if (!gc_backend_url) return;
+
+    const url = `${gc_backend_url.replace(/\/+$/, "")}/risk/score`;
+    const response = await fetch(url, {
+      headers: {
+        "Authorization": gc_api_token ? `Bearer ${gc_api_token}` : ""
+      }
+    });
+
+    if (response.ok) {
+      const data = await response.json();
+      gamificationState.riskScore = data.score;
+      gamificationState.lastRiskUpdate = Date.now();
+      console.log("Risk score updated:", data.score);
+      
+      // Notify UIs
+      chrome.runtime.sendMessage({
+        type: "risk:update",
+        score: data.score,
+        breakdown: data.inputs_breakdown
+      }).catch(() => {}); // Ignore if no listeners
+    }
+  } catch (e) {
+    console.error("Failed to fetch risk score:", e);
+  }
+}
+
+// Fetch audit stats
+async function fetchStats() {
+  try {
+    const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(["gc_backend_url", "gc_api_token"]);
+    if (!gc_backend_url) return;
+
+    const url = `${gc_backend_url.replace(/\/+$/, "")}/audit/stats`;
+    const response = await fetch(url, {
+      headers: {
+        "Authorization": gc_api_token ? `Bearer ${gc_api_token}` : ""
+      }
+    });
+
+    if (response.ok) {
+      const stats = await response.json();
+      console.log("Stats updated:", stats);
+      
+      // Notify UIs
+      chrome.runtime.sendMessage({
+        type: "stats:update",
+        stats: stats
+      }).catch(() => {});
+    }
+  } catch (e) {
+    console.error("Failed to fetch stats:", e);
+  }
+}
+
+// Update safe streak calculation - tracks active browsing time
+function updateSafeStreak() {
+  // Get browser start time and last violation
+  chrome.storage.local.get(["browserStartTime", "lastViolation"]).then(({ browserStartTime, lastViolation }) => {
+    const now = Date.now();
+    
+    // Initialize browser start time if not set
+    if (!browserStartTime) {
+      chrome.storage.local.set({ browserStartTime: now });
+      gamificationState.safeStreakHours = 0;
+      return;
+    }
+    
+    // If there's a recent violation, calculate from violation time
+    if (lastViolation && lastViolation > browserStartTime) {
+      const hoursSinceViolation = Math.floor((now - lastViolation) / (1000 * 60 * 60));
+      gamificationState.safeStreakHours = Math.min(hoursSinceViolation, 999);
+      gamificationState.lastViolation = lastViolation;
+    } else {
+      // No violations or old violation - calculate from browser start
+      const hoursSinceStart = Math.floor((now - browserStartTime) / (1000 * 60 * 60));
+      gamificationState.safeStreakHours = Math.min(hoursSinceStart, 999);
+    }
+  });
+}
+
+function calculateStreak() {
+  updateSafeStreak();
+}
+
+// Check for time-left nudges
+function checkTimeLeftNudges() {
+  const timeCheck = isInBlockedTimeWindow();
+  if (!timeCheck.blocked) {
+    // Not in a time window - check if one is coming soon
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+    
+    for (const rule of rulesCache.time_window) {
+      try {
+        const config = JSON.parse(rule.pattern);
+        const startHour = config.start_hour || 0;
+        
+        // Check if we're within 15 minutes of window start
+        const minutesUntilStart = (startHour * 60) - (currentHour * 60 + currentMinute);
+        
+        if (minutesUntilStart > 0 && minutesUntilStart <= 15) {
+          // Send nudge
+          chrome.runtime.sendMessage({
+            type: "nudge:timeleft",
+            minutes: minutesUntilStart,
+            rule: rule
+          }).catch(() => {});
+          
+          break;
+        }
+      } catch (e) {
+        // Ignore malformed rules
+      }
+    }
+  }
+}
+
+// Periodic background updates (debounced polling)
+let updateTimer = null;
+function scheduleBackgroundUpdate() {
+  if (updateTimer) return; // Already scheduled
+  
+  updateTimer = setTimeout(async () => {
+    await Promise.all([
+      fetchRules(),
+      fetchRiskScore(),
+      fetchStats()
+    ]);
+    
+    updateSafeStreak();
+    
+    // Notify UIs about streak update
+    chrome.runtime.sendMessage({
+      type: "nudge:streak",
+      hours: gamificationState.safeStreakHours
+    }).catch(() => {});
+    
+    updateTimer = null;
+    
+    // Schedule next update in 30 seconds
+    setTimeout(scheduleBackgroundUpdate, 30000);
+  }, 1000);
+}
+
 // Fetch rules on startup and periodically
 chrome.runtime.onInstalled.addListener(() => {
   console.log("GuardianCore Audit Probe installed");
   fetchRules();
+  updateSafeStreak();
+  scheduleBackgroundUpdate();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   fetchRules();
+  updateSafeStreak();
+  scheduleBackgroundUpdate();
 });
 
-// Refresh rules every 5 minutes
-setInterval(fetchRules, 5 * 60 * 1000);
+// When popup opens, trigger immediate refresh
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name === "popup") {
+    scheduleBackgroundUpdate();
+  }
+});
 
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -288,5 +467,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === "REFRESH_RULES") {
     fetchRules().then(() => sendResponse({ ok: true }));
     return true; // Async response
+  } else if (message.type === "GET_GAMIFICATION_STATE") {
+    updateSafeStreak();
+    sendResponse({
+      safeStreakHours: gamificationState.safeStreakHours,
+      riskScore: gamificationState.riskScore,
+      lastUpdate: gamificationState.lastRiskUpdate
+    });
+  } else if (message.type === "CHECK_TIME_NUDGE") {
+    checkTimeLeftNudges();
+    sendResponse({ ok: true });
   }
 });
