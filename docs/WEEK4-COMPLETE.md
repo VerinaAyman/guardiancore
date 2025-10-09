@@ -1,190 +1,37 @@
 # GuardianCore Week 4 - Complete Documentation
 
-**Version:** 0.4.5 (Scheduled Windows & XP Balance)  
-**Released:** 2025-10-04  
+**Version:** 0.4.5  
 **Branch:** phase-4  
-**Focus:** XP-Only Gamification, Security Hardening, PIN/Recovery System, Developer Tooling
+**Focus:** XP-Only Gamification, Per-Domain Scheduling, Security Hardening
 
 ---
 
 ## 📋 Table of Contents
 
-1. [Overview](#ove- Physical OS access → Can export chrome.storage.local (OS-level threat)
-- Lost PIN + Lost recovery codes → Unrecoverable (by design)
-- No rate limiting on PIN attempts (future enhancement)
-
----
-
-## Features Implemented
-
-### 1. XP System (Extension - Local)
-
-**Implementation:** `background.js`
-
-```javascript
-function awardXp(event) {
-  ensureXpDay();
-  let delta = 1; // base
-  if (event.csp) delta += 2;
-  if (event.cors) delta += 1;
-  if (event.trackers === 0) delta += 3; 
-  else delta -= Math.min(event.trackers, 5);
-  if (event.blocked || event.violation) delta -= 5;
-  if (delta < 0) delta = Math.max(delta, -7);
-  if (fastMode) delta *= 3;
-  
-  xpState.xp += delta;
-  if (xpState.xp < 0) xpState.xp = 0;
-  
-  while (xpState.xp >= 100) {
-    xpState.xp -= 100;
-    xpState.level += 1;
-  }
-  
-  persistXp();
-  notifyPopup();
-}
-```
-
-**Triggers:**
-- `chrome.webNavigation.onCompleted` (main frame only)
-- Blocked navigations (immediate penalty)
-
-**Excluded:**
-- `chrome://` pages
-- `chrome-extension://` pages
-- Navigations within XP cooldown window
-
-### 2. Auto-Refresh Rules (v0.4.3)
-
-**Problem:** After saving backend config in Options, rules list was empty until page refresh + PIN re-entry.
-
-**Solution:**
-```javascript
-async function saveSettings() {
-  await chrome.storage.local.set({ gc_backend_url, gc_api_token });
-  showStatus("✅ Settings saved successfully", "success");
-  
-  // Auto-load rules immediately
-  await loadRules();
-  
-  // Notify background to refetch
-  chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
-}
-```
-
-**Result:** Rules appear instantly after saving config, no page refresh needed.
-
-### 3. Export/Import (Backend)
-
-**Export Endpoint:** `GET /rules/all/export`
-
-**Response:**
-```json
-{
-  "version": "1",
-  "exported_at": "2025-10-04T12:00:00Z",
-  "rules": [
-    {
-      "rule_type": "blocklist",
-      "pattern": "tiktok.com",
-      "category": "social_media",
-      "enabled": true
-    }
-  ]
-}
-```
-
-**Import Endpoint:** `POST /rules/all/import`
-
-**Request:**
-```json
-{
-  "version": "1",
-  "rules": [ /* array of rule objects */ ]
-}
-```
-
-**Response:**
-```json
-{
-  "imported": 5,
-  "skipped": 0,
-  "errors": []
-}
-```
-
-### 4. WebAuthn Stubs (Backend)
-
-**Endpoints (All return stub):**
-- `POST /webauthn/register/options`
-- `POST /webauthn/register/verify`
-- `POST /webauthn/assertion/options`
-- `POST /webauthn/assertion/verify`
-
-**Response:**
-```json
-{
-  "status": "stub",
-  "message": "WebAuthn coming soon",
-  "available": false
-}
-```
-
-### 5. Factory Reset (Extension)
-
-**Functionality:**
-- Clears all `chrome.storage.local` data
-- Wipes PIN, recovery codes, cached rules, XP state
-- Reloads extension via `chrome.runtime.reload()`
-
-**Safety:**
-- Two-step confirmation
-- Explicit warnings shown
-- No undo capability
-
----)
+1. [Overview](#overview)
 2. [Quick Start](#quick-start)
-3. [Gamification System (XP-Only)](#gamification-system-xp-only)
-4. [Security Enhancements](#security-enhancements)
-5. [Features Implemented](#features-implemented)
+3. [Gamification System](#gamification-system)
+4. [Scheduling System](#scheduling-system)
+5. [Security Enhancements](#security-enhancements)
 6. [Testing Guide](#testing-guide)
 7. [API Reference](#api-reference)
 8. [Troubleshooting](#troubleshooting)
-9. [Changelog](#changelog)
 
 ---
 
 ## Overview
 
-Week 4 delivers a streamlined, fast-feedback gamification system and production-ready security for GuardianCore's privacy-focused parental controls.
+GuardianCore provides privacy-focused parental controls through a Chrome extension with backend API. The system uses local XP-based gamification, flexible per-domain scheduling, and PIN-protected configuration.
 
-### Key Achievements ✅
+### Key Features
 
-- 🎯 **XP-Only Gamification**: Instant feedback on every navigation
-- ⚖️ **XP Balance Tuning**: Tracker penalty −0.5 (max −2.5) & negative floor −5 (was −7)
-- � **Scheduled Time Windows**: Global or per-domain block / allow-only windows
-- 🌐 **Global vs Domain**: Leave domain blank for global curfew; fill for domain-specific schedule
-- 🔁 **Allow-Window Semantics**: Outside an allow-only window → domain blocked automatically
-- 🏷 **Mandatory Reasons**: Every rule requires an explanatory reason
-- ⏱ **Rule Timestamps & Scope Tags**: "24h" vs "Window" + created datetime
-- 🔑 **Recovery Codes Simplified**: One-time view; minimal surface
-- � **PBKDF2 PIN Security**: 310k iterations, unique salt
-- 🧪 **Dev Tools**: Fast mode, violation simulation, XP reset
-- 💾 **Export/Import**: `/rules/all/export` & `/rules/all/import`
-- 🧱 **Security Loopholes Closed**: PIN-gated regeneration, XP farming prevention
-- 👥 **Role Separation**: Popup is read‑only, rules hidden from child
-- ⚡ **Auto-Refresh Rules**: Immediate display after backend save
-- 🛠 **Dev Productivity**: `make db-reset` for schema resets
-
-### Version History
-
-- **0.4.0** - Initial Week 4: Risk score + safe streak + PIN system
-- **0.4.1** - Security fixes: recovery code loophole patched
-- **0.4.2** - Active-time streak redesign + dev tools
-- **0.4.3** - XP-only model, XP farming prevention, auto-refresh rules
-- **0.4.4** - XP balance tuning (tracker penalties, negative floor), recovery UI simplification
-- **0.4.5** - Scheduled time windows (domain/global + allow/block), mandatory reasons, timestamps, db-reset
+- **XP-Only Gamification**: Instant feedback on every navigation
+- **Per-Domain Scheduling**: Block or allow specific sites during time windows
+- **Global Curfews**: Block all browsing during specified hours
+- **PIN Protection**: PBKDF2-secured parent settings
+- **Recovery Codes**: 10 one-time backup codes for PIN recovery
+- **XP Farming Prevention**: 30-second cooldown per URL
+- **Auto-Refresh**: Rules load immediately after configuration
 
 ---
 
@@ -197,7 +44,9 @@ cd guardiancore
 docker compose up -d
 
 # Verify services
-docker ps
+docker compose ps
+# Expected: db (healthy), backend (Up)
+
 curl http://localhost:8000/health
 # Expected: {"status":"ok","name":"GuardianCore","env":"dev"}
 ```
@@ -209,57 +58,51 @@ curl http://localhost:8000/health
 3. Click "Load unpacked" → Select `app-extension` folder
 4. Pin extension to toolbar
 
-### 3. First-Time Setup
+### 3. Configure Extension
 
-#### A. Create PIN (Options Page)
+**Create PIN:**
 1. Right-click extension → "Options"
 2. Enter PIN (≥4 digits), confirm
-3. **Alert shows 10 recovery codes** - save them immediately!
-4. Options page auto-unlocks
+3. Save the 10 recovery codes shown (one-time display!)
 
-#### B. Configure Backend (Options Page)
+**Configure Backend:**
 1. Settings tab
 2. Backend URL: `http://localhost:8000`
 3. API Token: `dev-token-123`
 4. Click "Save Backend Settings"
-5. Rules list loads automatically (no refresh needed!)
 
 ---
 
-## Gamification System (XP-Only)
+## Gamification System
 
-### 🎯 Design Rationale
+### How It Works
 
-**Removed:** Risk score (backend polling, 0–100 static value) + Safe streak (active time accumulation, heartbeat timers)
+The extension awards XP (experience points) on every page load based on privacy/security signals. XP accumulates toward levels (100 XP = 1 level). Daily XP resets at UTC midnight, but levels persist.
 
-**Why?** Too static, overlapping meaning, added complexity without clear user benefit.
+### XP Rules (v0.4.5)
 
-**New:** Local XP system with instant feedback per navigation.
-
-### 🧮 XP Rules (v0.4.5)
-
-| Event / Condition | XP Delta |
-|-------------------|----------|
-| Base per page load | +1 |
-| Page has CSP header | +2 |
-| Page exposes CORS signals | +1 |
-| Zero trackers detected | +3 |
-| Each tracker (up to 5) | **-0.5 each** (max -2.5) |
-| Blocked / violation navigation | -5 |
-| Fast Mode enabled (dev) | Final delta ×3 |
+| Event / Condition | XP Delta | Notes |
+|-------------------|----------|-------|
+| Base per page load | +1 | Every navigation |
+| Page has CSP header | +2 | Security bonus |
+| Page exposes CORS signals | +1 | Privacy indicator |
+| Zero trackers detected | +3 | Clean page bonus |
+| Each tracker (up to 5) | **−0.5 each** | Max penalty: −2.5 |
+| Blocked / violation | −5 | Heavy penalty maintained |
+| Fast Mode (dev) | ×3 | Multiplies final delta |
 
 **Mechanics:**
 - XP floors at 0 (never negative overall)
-- Level up every 100 XP (XP wraps carry remainder)
-- Daily reset at UTC day boundary; level persists
-- Single-event negative delta floored at -5 (was -7 pre-0.4.4)
-- Tracker penalty reduced for fairness on tracker-heavy sites
+- Level up every 100 XP (remainder carries over)
+- Daily reset at UTC day boundary; **level persists**
+- Single-event negative delta floored at −5
+- Tracker penalty gentler for real-world browsing
 
-### 🔄 Daily Reset Logic
+### Daily Reset Logic
 
 Stored state: `gc_xp_state`
 ```json
-{ "dayKey": "2025-10-04", "xp": 57, "level": 3 }
+{ "dayKey": "2025-10-09", "xp": 57, "level": 3 }
 ```
 
 On any XP mutation:
@@ -267,46 +110,247 @@ On any XP mutation:
 2. If true: reset `xp = 0`, keep `level`, update `dayKey`
 3. Persist to storage
 
-### 🚫 XP Farming Prevention (v0.4.3)
+### XP Farming Prevention (v0.4.3)
 
-**Problem:** Spamming refresh (F5) on the same URL awarded XP every time.
+**Problem:** Spamming refresh (F5) awarded XP repeatedly.
 
-**Solution:** URL + timestamp tracking with 30-second cooldown.
+**Solution:** 30-second per-URL cooldown.
 
 ```javascript
-// Per-URL cooldown
-const recentNavigations = new Map(); // url -> last_awarded_timestamp
-const XP_COOLDOWN_MS = 30000; // 30 seconds
+const recentNavigations = new Map(); // url -> timestamp
+const XP_COOLDOWN_MS = 30000;
 
-// Before awarding XP:
 if (timeSinceLastAward >= XP_COOLDOWN_MS) {
   awardXp(...);
   recentNavigations.set(url, now);
 }
 ```
 
-**Result:** Refreshing the same page repeatedly won't farm XP. User must navigate to different pages or wait 30 seconds.
+**Result:** Refreshing same page won't farm XP. Must navigate elsewhere or wait 30s.
 
-### 🧩 Popup UX
+### Popup UX
 
-**Visible Elements:**
-- Level (persistent)
-- Daily XP (current, resets daily)
-- Progress bar (0-100%, fills as XP increases)
+**Visible:**
+- Level (persistent across days)
+- Daily XP (resets at UTC day boundary)
+- Progress bar (0-100%, visual XP/100)
 - "X XP to next level" text
-- **"How you earn XP"** explanation list
+- "How you earn XP" explanation list
 
-**Removed Elements:**
+**Removed:**
 - Safe Streak hours
 - Risk score color indicator
-- Compliant message
 - Time restriction nudges
+
+---
+
+## Scheduling System
+
+### Overview (v0.4.5)
+
+Create time windows that apply **globally** or **per-domain** with two modes:
+
+1. **Block Window**: Block access during specified hours
+2. **Allow Window**: Only allow during specified hours (outside = blocked)
+
+### Rule Types
+
+#### Domain-Specific Block Window
+**Use Case:** "Block TikTok during school hours (8AM-5PM weekdays)"
+
+```json
+{
+  "rule_type": "time_window",
+  "pattern": {
+    "start_hour": 8,
+    "end_hour": 17,
+    "days": [1, 2, 3, 4, 5],
+    "action": "block",
+    "domain": "tiktok.com"
+  },
+  "explanation": "No social media during school"
+}
+```
+
+**Behavior:**
+- 8AM-5PM Mon-Fri: `tiktok.com` blocked
+- Outside window OR other domains: No effect
+- Domain-specific = surgical control
+
+#### Domain-Specific Allow Window
+**Use Case:** "Only allow educational sites 9AM-6PM"
+
+```json
+{
+  "rule_type": "time_window",
+  "pattern": {
+    "start_hour": 9,
+    "end_hour": 18,
+    "days": [1, 2, 3, 4, 5],
+    "action": "allow",
+    "domain": "khanacademy.org"
+  },
+  "explanation": "Study time access"
+}
+```
+
+**Behavior:**
+- 9AM-6PM Mon-Fri: `khanacademy.org` allowed
+- Outside window: `khanacademy.org` **blocked**
+- Other domains: Unaffected
+
+#### Global Block Window (Curfew)
+**Use Case:** "No browsing after bedtime (10PM-7AM)"
+
+```json
+{
+  "rule_type": "time_window",
+  "pattern": {
+    "start_hour": 22,
+    "end_hour": 7,
+    "days": [0, 1, 2, 3, 4, 5, 6],
+    "action": "block",
+    "domain": null
+  },
+  "explanation": "Bedtime curfew"
+}
+```
+
+**Behavior:**
+- 10PM-7AM every day: **All sites blocked** (except allowlist)
+- Domain field empty = global scope
+
+### Precedence Chain
+
+1. **Allowlist** → Always accessible
+2. **Allow Windows (domain)** → If in window, allow; else block that domain
+3. **Block Windows (domain)** → If in window, block that domain
+4. **Block Windows (global)** → If in window, block all non-allowlisted sites
+5. **Blocklist** → Always blocked
+
+### UI Implementation
+
+**Options Page (Add Rule):**
+```html
+<select id="rule-type">
+  <option value="allowlist">Allowlist (Always OK)</option>
+  <option value="blocklist">Blocklist (Always Blocked)</option>
+  <option value="time_window">Time Window</option>
+</select>
+
+<!-- Shown when time_window selected -->
+<select id="time-window-action">
+  <option value="block">Block during window</option>
+  <option value="allow">Allow only during window</option>
+</select>
+
+<input id="rule-pattern" placeholder="Domain (empty = global)">
+<input id="start-hour" type="number" min="0" max="23">
+<input id="end-hour" type="number" min="0" max="23">
+<!-- Day buttons: Sun-Sat -->
+<input id="rule-explanation" required placeholder="Why this rule?">
+```
+
+**Pattern Builder:**
+```javascript
+if (ruleType === 'time_window') {
+  const action = document.getElementById('time-window-action').value;
+  const domain = document.getElementById('rule-pattern').value.trim() || null;
+  pattern = JSON.stringify({
+    start_hour: startHour,
+    end_hour: endHour,
+    days: selectedDays,
+    action: action,
+    domain: domain
+  });
+}
+```
+
+### Background Enforcement (background.js)
+
+```javascript
+function evaluateTimeWindows(url) {
+  const now = new Date();
+  const currentHour = now.getHours();
+  const currentDay = now.getDay();
+  const hostname = new URL(url).hostname.replace(/^www\./,'');
+
+  const domainAllowWindows = [];
+  const domainBlockWindows = [];
+  const globalBlockWindows = [];
+
+  for (const rule of rulesCache.time_window) {
+    const cfg = JSON.parse(rule.pattern);
+    if (cfg.days && !cfg.days.includes(currentDay)) continue;
+    
+    const inWindow = (cfg.start_hour > cfg.end_hour) // overnight
+      ? (currentHour >= cfg.start_hour || currentHour < cfg.end_hour)
+      : (currentHour >= cfg.start_hour && currentHour < cfg.end_hour);
+    
+    if (cfg.domain) {
+      const matchesDomain = hostname === cfg.domain || 
+                           hostname.endsWith('.' + cfg.domain);
+      if (!matchesDomain) continue;
+      
+      if (cfg.action === 'allow') {
+        domainAllowWindows.push({ rule, inWindow });
+      } else {
+        domainBlockWindows.push({ rule, inWindow });
+      }
+    } else if (cfg.action === 'block') {
+      globalBlockWindows.push({ rule, inWindow });
+    }
+  }
+
+  // Domain allow semantics
+  if (domainAllowWindows.length) {
+    if (domainAllowWindows.some(w => w.inWindow)) {
+      return { allowed: true, reason: 'Allowed (scheduled window)' };
+    }
+    return { blocked: true, reason: 'Outside allowed window' };
+  }
+
+  // Domain block semantics
+  if (domainBlockWindows.some(w => w.inWindow)) {
+    return { blocked: true, reason: 'Blocked (scheduled window)' };
+  }
+
+  // Global block semantics
+  if (globalBlockWindows.some(w => w.inWindow)) {
+    return { blocked: true, reason: 'Blocked (global curfew)' };
+  }
+
+  return { allowed: true };
+}
+```
+
+### Formatting (UI Display)
+
+```javascript
+function formatTimeWindow(pattern) {
+  const config = JSON.parse(pattern);
+  const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+  const daysStr = config.days?.length === 7 
+    ? 'All Days' 
+    : config.days.map(d => dayNames[d]).join(', ');
+  const domainPart = config.domain ? `${config.domain} ` : 'Global ';
+  const actionTag = config.action === 'allow' 
+    ? '[ALLOW window]' 
+    : '[BLOCK window]';
+  return `${domainPart}${config.start_hour}:00-${config.end_hour}:00 ${actionTag} (${daysStr})`;
+}
+```
+
+**Example Outputs:**
+- `tiktok.com 8:00-17:00 [BLOCK window] (Mon, Tue, Wed, Thu, Fri)`
+- `khanacademy.org 9:00-18:00 [ALLOW window] (Mon-Fri)`
+- `Global 22:00-7:00 [BLOCK window] (All Days)`
 
 ---
 
 ## Security Enhancements
 
-### 🔐 PIN Storage (PBKDF2)
+### PIN Storage (PBKDF2)
 
 **Algorithm:** PBKDF2-HMAC-SHA-256
 
@@ -332,11 +376,11 @@ if (timeSinceLastAward >= XP_COOLDOWN_MS) {
 - ✅ Unique salt per PIN (prevents rainbow tables)
 - ✅ 310k iterations (brute-force resistant)
 
-### 🔑 Recovery Codes
+### Recovery Codes
 
 **Format:** `XXXX-XXXX-XXXX`
 
-**Alphabet:** `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (32 chars, no look-alikes)
+**Alphabet:** `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (32 chars, no look-alikes: I/1, O/0, S/5, Z/2)
 
 **Entropy:** 12 characters × ~5 bits = ~60 bits
 
@@ -353,22 +397,22 @@ if (timeSinceLastAward >= XP_COOLDOWN_MS) {
 ```
 
 **Operations:**
-- **Generate:** Creates 10 codes, shows plaintext once (alert), then deletes plaintext from storage
-- **Download:** Exports as `.txt` file (date + batch ID in filename)
+- **Generate:** Creates 10 codes, shows plaintext once (alert), then deletes from storage
+- **Download:** Exports as `.txt` file (`guardian_recovery_codes_YYYYMMDD_BATCHID.txt`)
 - **Regenerate:** Requires PIN verification, marks old batch inactive
 - **Verify:** Constant-time comparison, one-time use only
-- **Forgot PIN:** Enter recovery code → Reset PIN → Auto-unlock options
+- **Forgot PIN:** Enter recovery code → Reset PIN → Auto-unlock
 
-### 🔴 Critical Security Fix: Recovery Regeneration Loophole
+### Critical Security Fix: Recovery Regeneration Loophole (v0.4.1)
 
-**Attack Vector (Before 0.4.1):**
+**Attack Vector (Before Fix):**
 1. Attacker opens locked options page
 2. Navigate to Recovery Codes tab
 3. Regenerate codes (no PIN required)
 4. Use new code to reset PIN
 5. Gain access ❌
 
-**Fix:**
+**Fix Applied:**
 ```javascript
 async function regenerateRecoveryCodes() {
   const pin = prompt("Enter your PIN to confirm:");
@@ -385,20 +429,7 @@ async function regenerateRecoveryCodes() {
 
 **Impact:** 🔴 HIGH - Prevented unauthorized access vector
 
-### ✅ Security Checklist
-
-- [x] PIN stored as PBKDF2 hash (310k iterations)
-- [x] Recovery codes stored as PBKDF2 hashes
-- [x] Each code has unique salt
-- [x] Codes can only be used once
-- [x] Constant-time comparison prevents timing attacks
-- [x] Regenerating codes requires PIN verification
-- [x] Old codes invalidated when new batch created
-- [x] No plaintext secrets in chrome.storage.local
-- [x] Format validation on recovery code input
-- [x] XP farming prevented via URL cooldown
-
-### 🛡️ Threat Model
+### Threat Model
 
 **Mitigated Threats:**
 
@@ -412,27 +443,9 @@ async function regenerateRecoveryCodes() {
 | XP farming (refresh spam) | 30-second per-URL cooldown |
 
 **Known Limitations:**
-- Physical OS access → Can export chrome.storage.local (OS-level threat)
+- Physical OS access → Can export `chrome.storage.local` (OS-level threat)
 - Lost PIN + Lost recovery codes → Unrecoverable (by design)
-- No rate limiting on PIN attempts (future enhancement)
-- [x] Clear user feedback for all operations
-
-### Threat Model
-
-**Threats Mitigated ✅**
-
-| Threat | Mitigation |
-|--------|-----------|
-| Unauthorized code regeneration | PIN required before regeneration |
-| Recovery code reuse | Codes marked as used after verification |
-| Timing attacks | Constant-time comparison implemented |
-| Rainbow table attacks | Unique salts per code/PIN |
-| Brute force attacks | PBKDF2 with 310k iterations |
-
-**Known Limitations:**
-- Physical access to OS → Can export chrome.storage.local (OS-level threat)
-- Lost PIN + Lost recovery codes → Unrecoverable (by design)
-- No rate limiting on PIN attempts (future enhancement)
+- No rate limiting on PIN attempts (implementation pending)
 
 ---
 
@@ -441,171 +454,97 @@ async function regenerateRecoveryCodes() {
 ### Test 1: PIN Creation & Recovery (3 min)
 
 ```
-✅ 1. Remove extension, clear storage:
-   chrome.storage.local.clear()
-
+✅ 1. Clear storage: chrome.storage.local.clear()
 ✅ 2. Reload extension, open Options
-
-✅ 3. Create PIN: 1234
-   Confirm: 1234
-   Expected: Alert shows 10 recovery codes
-
-✅ 4. Save one code, close options
-
-✅ 5. Reopen options → Click "Forgot PIN?"
-
-✅ 6. Enter saved code
-   Expected: ✅ "Recovery code verified!"
-
-✅ 7. Create new PIN: 5678
-   Expected: Auto-unlocks to settings
-
-✅ 8. Try same code again
-   Expected: ❌ "Invalid or already used"
+✅ 3. Create PIN: 1234, confirm
+✅ 4. Alert shows 10 recovery codes → Save one
+✅ 5. Close options
+✅ 6. Reopen → Click "Forgot PIN?"
+✅ 7. Enter saved code → New PIN: 5678
+✅ 8. Options auto-unlocks
+✅ 9. Try same code again → ❌ "Invalid or already used"
 ```
 
-### Test 2: XP System (4 min)
+### Test 2: XP System & Cooldown (4 min)
 
 ```
-✅ 1. Open popup
-   Expected: Level 1, XP 0, empty progress bar
-
-✅ 2. Navigate to 3 different websites
-   Expected: XP increases (3-12 depending on trackers/CSP)
-
-✅ 3. Press F5 (refresh) 5 times on same page
-   Expected: XP only increases once (cooldown active)
-
-✅ 4. Wait 30 seconds, refresh again
-   Expected: XP increases (cooldown expired)
-
-✅ 5. Dev tools (press D 5×) → "Simulate Violation"
-   Expected: XP decreases by 5
-
-✅ 6. Dev tools → "Reset XP"
-   Expected: XP = 0, level unchanged, bar empties
+✅ 1. Open popup → Level 1, XP 0
+✅ 2. Navigate to 3 different sites → XP increases
+✅ 3. Press F5 (refresh) 5× on same page → XP increases only once
+✅ 4. Background console shows: "[XP] Cooldown active for [url]"
+✅ 5. Wait 30s, refresh again → XP increases
+✅ 6. Dev tools (D 5×) → "Simulate Violation" → XP decreases by 5
+✅ 7. Dev tools → "Reset XP" → XP=0, level unchanged
 ```
 
-### Test 3: Auto-Refresh Rules (2 min)
+### Test 3: Per-Domain Scheduling (5 min)
 
 ```
-✅ 1. Open Options (unlocked)
-
-✅ 2. Go to Settings tab
-
-✅ 3. Enter backend config:
-   URL: http://localhost:8000
-   Token: dev-token-123
-
-✅ 4. Click "Save Backend Settings"
-   Expected: Success message + Rules list loads immediately
-
-✅ 5. Go to Rules tab
-   Expected: Rules already visible (no refresh needed)
+✅ 1. Options → Rules tab → Add Rule
+✅ 2. Rule Type: Time Window
+✅ 3. Window Mode: Block during window
+✅ 4. Domain: tiktok.com
+✅ 5. Start: 8, End: 17
+✅ 6. Days: Mon-Fri (select 5 buttons)
+✅ 7. Reason: "No social media during school"
+✅ 8. Click Add Rule → Success
+✅ 9. Rule card shows: "tiktok.com 8:00-17:00 [BLOCK window] (Mon-Fri)"
+✅ 10. Navigate to tiktok.com between 8AM-5PM weekday → Blocked
+✅ 11. Navigate to youtube.com same time → Allowed (other domain unaffected)
+✅ 12. Navigate to tiktok.com at 6PM → Allowed (outside window)
 ```
 
-### Test 4: XP Farming Prevention (2 min)
+### Test 4: Auto-Refresh Rules (2 min)
 
 ```
-✅ 1. Open popup, note current XP
-
-✅ 2. Navigate to any website
-   Expected: XP increases
-
-✅ 3. Press F5 (refresh) 10 times rapidly
-   Expected: XP does NOT increase after first load
-
-✅ 4. Background console shows:
-   "[XP] Cooldown active for [url] (Xs remaining)"
-
-✅ 5. Wait 30 seconds, refresh once
-   Expected: XP increases again
+✅ 1. Options (unlocked) → Settings tab
+✅ 2. Enter backend URL & token
+✅ 3. Click "Save Backend Settings"
+✅ 4. Success message appears + Rules list populates immediately
+✅ 5. Navigate to Rules tab → Rules visible (no refresh needed)
 ```
 
-### Test 5: Recovery Code Download (2 min)
+### Test 5: 307 Redirect Resolution (1 min)
 
 ```
-✅ 1. Options → Recovery Codes tab
-
-✅ 2. Click "Regenerate Codes"
-   Enter PIN: 1234
-   Confirm warning
-
-✅ 3. File downloads as:
-   guardian_recovery_codes_20251004_XXXXX.txt
-
-✅ 4. Open file
-   Expected: 10 codes in XXXX-XXXX-XXXX format
-
-✅ 5. Recovery tab updates
-   Expected: 10 unused codes, old batch gone
+✅ 1. Open browser DevTools → Network tab
+✅ 2. Navigate with extension active
+✅ 3. Filter for "/rules" requests
+✅ 4. Verify: Direct 200 OK response (no 307 redirect)
+✅ 5. Check backend logs: No "307 Temporary Redirect" entries
 ```
 
 ### Backend Tests
 
 ```bash
-# Test health endpoint
+# Health check
 curl http://localhost:8000/health
-
 # Expected: {"status":"ok","name":"GuardianCore","env":"dev"}
-curl -X POST http://localhost:8000/webauthn/register/options \
+
+# Database connectivity
+curl http://localhost:8000/health/db
+# Expected: {"db":"ok"}
+
+# Rules endpoint (no trailing slash)
+curl http://localhost:8000/rules?enabled_only=true \
   -H "Authorization: Bearer dev-token-123"
+# Expected: Direct 200 OK (no redirect)
 
-# Expected: { status: "stub", message: "coming soon", available: false }
-
-# Test audit stats
+# Audit stats
 curl http://localhost:8000/audit/stats \
   -H "Authorization: Bearer dev-token-123"
+# Expected: {total_audits, unique_origins, avg_trackers, ...}
 
-# Expected: { total_audits, unique_origins, avg_trackers, ... }
-
-# Test rules export
-curl http://localhost:8000/rules/export \
+# Export rules
+curl http://localhost:8000/rules/all/export \
   -H "Authorization: Bearer dev-token-123" \
   > rules-backup.json
 
-# Test rules import
-curl -X POST http://localhost:8000/rules/import \
+# Import rules
+curl -X POST http://localhost:8000/rules/all/import \
   -H "Authorization: Bearer dev-token-123" \
   -H "Content-Type: application/json" \
   -d @rules-backup.json
-```
-
-#### Extension Tests
-
-**Test PIN Protection:**
-```
-1. Options page locked on load
-2. Correct PIN unlocks
-3. Incorrect PIN shows error
-4. Close & reopen requires PIN again
-```
-
-**Test Gamification:**
-```
-1. Open popup → See "Your Activity" section
-2. Safe Streak: Shows hours without violations
-3. Risk Score: Shows 0-100 score (color-coded)
-4. Navigate to blocked site → Check popup
-5. Streak resets to 0
-```
-
-**Test Real-Time Updates:**
-```
-1. Background updates every 30 seconds
-2. Open popup triggers immediate refresh
-3. Risk score updates from backend
-4. Safe streak persists across restarts
-```
-
-**Test Factory Reset:**
-```
-1. Options → Export/Import tab
-2. Scroll to bottom → Click "Factory Reset"
-3. Confirm twice (warnings shown)
-4. Extension reloads automatically
-5. All data wiped (PIN, codes, rules)
-6. Reopen options → First-time setup
 ```
 
 ---
@@ -614,38 +553,53 @@ curl -X POST http://localhost:8000/rules/import \
 
 ### Backend Endpoints
 
-#### Health Check
+#### Health & Status
 ```bash
 GET /health
-Response: { "status": "ok", "name": "GuardianCore", "env": "dev" }
+# Response: {"status":"ok","name":"GuardianCore","env":"dev"}
+
+GET /health/db
+# Response: {"db":"ok"}
+
+GET /health/version
+# Response: {"version":"0.4.5"}
 ```
 
-#### Rules Export
+#### Rules Management
 ```bash
+GET /rules?enabled_only=true
+# Headers: Authorization: Bearer <token>
+# Response: [{rule_type, pattern, enabled, explanation, created_at}, ...]
+
+POST /rules
+# Headers: Authorization: Bearer <token>, Content-Type: application/json
+# Body: {rule_type, pattern, explanation, enabled}
+# Response: {id, rule_type, pattern, enabled, created_at}
+
+DELETE /rules/{rule_id}
+# Headers: Authorization: Bearer <token>
+# Response: 204 No Content
+
 GET /rules/all/export
-Headers: Authorization: Bearer <token>
-Response: { version: "1", rules: [...] }
-```
+# Headers: Authorization: Bearer <token>
+# Response: {version: "1", exported_at, rules: [...]}
 
-#### Rules Import
-```bash
 POST /rules/all/import
-Headers: Authorization: Bearer <token>
-Body: { version: "1", rules: [...] }
-Response: { imported: N, skipped: M, errors: [] }
+# Headers: Authorization: Bearer <token>, Content-Type: application/json
+# Body: {version: "1", rules: [...]}
+# Response: {imported: N, skipped: M, errors: []}
 ```
 
-#### Audit Stats
+#### Audit System
 ```bash
+POST /audit/submit
+# Headers: Authorization: Bearer <token>, Content-Type: application/json
+# Body: {origin_hash, check_type, policy_state, timestamp}
+# Response: {id, created_at}
+
 GET /audit/stats
-Headers: Authorization: Bearer <token>
-Response: {
-  total_audits: 123,
-  unique_origins: 45,
-  avg_trackers: 2.3,
-  csp_coverage: 0.67,
-  cors_coverage: 0.89
-}
+# Headers: Authorization: Bearer <token>
+# Response: {total_audits, unique_origins, avg_trackers, csp_coverage, cors_coverage}
 ```
 
 #### WebAuthn (Stubs)
@@ -654,7 +608,7 @@ POST /webauthn/register/options
 POST /webauthn/register/verify
 POST /webauthn/assertion/options
 POST /webauthn/assertion/verify
-All return: { status: "stub", available: false }
+# All return: {status: "stub", message: "coming soon", available: false}
 ```
 
 ### Extension Messages
@@ -662,33 +616,33 @@ All return: { status: "stub", available: false }
 #### Background → Popup
 ```javascript
 // XP Update
-{ type: "xp:update", xp: 57, level: 3, progress: 0.57, delta: +3 }
+{type: "xp:update", xp: 57, level: 3, progress: 0.57, delta: +3}
 
 // Stats Update
-{ type: "stats:update", stats: { total_audits: 123, ... } }
+{type: "stats:update", stats: {total_audits: 123, ...}}
 ```
 
 #### Popup/Options → Background
 ```javascript
 // Get XP State
-{ type: "GET_XP_STATE" }
-Response: { xp: 57, level: 3, progress: 0.57 }
+{type: "GET_XP_STATE"}
+// Response: {xp: 57, level: 3, progress: 0.57}
 
 // Refresh Rules
-{ type: "REFRESH_RULES" }
-Response: { ok: true }
+{type: "REFRESH_RULES"}
+// Response: {ok: true}
 
 // Dev: Toggle Fast Mode
-{ type: "DEV_TOGGLE_FAST_MODE" }
-Response: { ok: true, fastMode: true }
+{type: "DEV_TOGGLE_FAST_MODE"}
+// Response: {ok: true, fastMode: true}
 
 // Dev: Simulate Violation
-{ type: "DEV_SIMULATE_VIOLATION" }
-Response: { ok: true }
+{type: "DEV_SIMULATE_VIOLATION"}
+// Response: {ok: true}
 
 // Dev: Reset XP
-{ type: "DEV_RESET_XP" }
-Response: { ok: true }
+{type: "DEV_RESET_XP"}
+// Response: {ok: true}
 ```
 
 ---
@@ -697,7 +651,7 @@ Response: { ok: true }
 
 ### Issue: XP Not Increasing
 
-**Symptoms:** XP stays at 0 no matter how much browsing
+**Symptoms:** XP stays at 0 despite browsing
 
 **Causes:**
 1. XP not initialized on load
@@ -707,118 +661,182 @@ Response: { ok: true }
 **Solution:**
 ```javascript
 // Background console (chrome://extensions → service worker):
-// Should see: "GuardianCore Audit Probe v0.4.3 loaded"
-// Should see: XP award messages or cooldown messages
+// Should see: "GuardianCore Audit Probe v0.4.5 loaded"
 
-// If not:
+// Check XP state:
 chrome.storage.local.get('gc_xp_state', console.log)
-// Should show: { dayKey: "2025-10-04", xp: N, level: M }
+// Expected: {dayKey: "2025-10-09", xp: N, level: M}
 
 // Force refresh:
 chrome.runtime.reload()
 ```
 
-### Issue: Rules Not Loading After Config Save
+### Issue: 307 Redirects in Backend Logs
 
-**Symptoms:** Save backend config, but rules list stays empty
-
-**Cause:** Fixed in 0.4.3 (auto-refresh implemented)
-
-**If still broken:**
-```javascript
-// Options page console:
-// Should see: [Options] Loaded N rules
-
-// Check:
-chrome.storage.local.get(['gc_backend_url', 'gc_api_token'], console.log)
-
-// Manually trigger:
-chrome.runtime.sendMessage({ type: "REFRESH_RULES" })
+**Symptoms:** Backend logs show:
+```
+INFO: "GET /rules?enabled_only=true HTTP/1.1" 307 Temporary Redirect
+INFO: "GET /rules/?enabled_only=true HTTP/1.1" 200 OK
 ```
 
-### Issue: XP Farming (Refresh Spam)
+**Cause:** Backend routes have trailing slashes, extension calls without.
 
-**Symptoms:** Refreshing same page farms XP
+**Solution:** Remove trailing slashes from `backend/src/app/routers/rules.py`:
+```python
+@router.get("/rules", response_model=list[RuleResponse])  # No trailing /
+```
 
-**Expected Behavior (v0.4.3):** 30-second cooldown per URL
+### Issue: Docker "No such image: postgres:16"
+
+**Symptoms:** `docker compose up` fails with image not found error.
+
+**Causes:**
+1. Image pruned/deleted
+2. Stale container references old image ID
+3. Docker Desktop state corruption
+
+**Solution:**
+```bash
+# 1. Stop and remove containers
+docker compose down
+
+# 2. Remove stale volume (destroys data!)
+docker volume rm guardiancore_pgdata
+
+# 3. Pull image fresh
+docker pull postgres:16
+
+# 4. Restart services
+docker compose up -d
+
+# 5. If still failing, restart Docker Desktop
+osascript -e 'quit app "Docker"'
+sleep 5
+open -a Docker
+```
+
+### Issue: Rules Not Loading After Config Save
+
+**Symptoms:** Save backend config, rules list stays empty.
+
+**Cause:** Fixed in v0.4.3 (auto-refresh implemented).
 
 **Verify:**
 ```javascript
-// Background console should show:
-"[XP] Cooldown active for https://example.com (25s remaining)"
-
-// If not seeing cooldowns:
-// Check version: should be v0.4.3 or higher
-```
-
-### Issue: PIN Creation Hangs
-
-**Symptoms:** Enter PIN, click Create, nothing happens
-
-**Cause:** Fixed in 0.4.3 (crypto module auto-generates salt)
-
-**Solution:**
-```javascript
 // Options console should show:
-[Options] Script starting v0.4.4...
-[Options] Crypto module loaded: [object Object]
+[Options] Loaded N rules
 
-// If undefined:
-// Reload extension
+// Check storage:
+chrome.storage.local.get(['gc_backend_url', 'gc_api_token'], console.log)
+
+// Manual trigger:
+chrome.runtime.sendMessage({type: "REFRESH_RULES"})
 ```
 
-### Issue: Recovery Codes Don't Download
+### Issue: Domain-Specific Window Blocks Globally
 
-**Symptoms:** Click Regenerate, enter PIN, no file downloads
+**Symptoms:** Time window for `tiktok.com` blocks all sites.
 
-**Cause:** Fixed in 0.4.3 (batch structure corrected)
+**Cause:** Fixed in v0.4.5 (domain matching refined).
 
-**Solution:**
+**Verify:**
 ```javascript
-// Check manifest has "downloads" permission
-// Check browser download settings
-// Try incognito mode
+// Background console during navigation:
+// Should see: "Evaluating windows for example.com"
+// Should NOT block if domain doesn't match rule's domain field
+
+// Check rule pattern:
+chrome.storage.local.get('rulesCache', (r) => {
+  console.log(r.rulesCache.time_window[0].pattern);
+  // Expected: {"domain":"tiktok.com", "action":"block", ...}
+  // Domain field must be present for domain-specific rules
+});
 ```
-
-**Modified Files:**
-- `manifest.json` - Version updates, downloads permission
-- `options.js` - PIN + recovery + backend config + fast mode persistence
-- `options.html` - Security tab renamed to Options; rule explanations removed; fast mode toggle added
-- `popup.js` - Dev unlock (5× 'D'), risk breakdown, simulation handlers
-- `popup.html` - Risk breakdown container, hidden Dev Tools panel
-- `background.js` - Active-time streak accumulator, heartbeat, fast mode, dev message handlers
-
-**Lines Changed:**
-- `options.js`: 661 lines (was 605)
-- `crypto.js`: 261 lines (new)
-- `background.js`: ~50 lines added
-- `popup.js`: ~30 lines added
 
 ---
 
-## Changelog
+## Developer Notes
 
-### [0.4.5] - 2025-10-04
+### Code Organization
+
+```
+app-extension/
+├── background.js    # Core: rules, enforcement, audit, XP
+├── popup.js         # Child UI: read-only, XP display
+├── options.js       # Parent UI: PIN-gated, rules CRUD
+├── crypto.js        # PBKDF2, recovery codes, salt generation
+├── xp.css           # XP bar & explanation styles
+└── manifest.json    # Extension config, permissions
+
+backend/
+├── src/app/
+│   ├── main.py           # FastAPI app, CORS, startup
+│   ├── config.py         # Settings & environment
+│   ├── db.py             # Database models & init
+│   └── routers/
+│       ├── health.py     # Health checks
+│       ├── rules.py      # Rules CRUD & export/import
+│       ├── audit.py      # Audit submission & stats
+│       └── webauthn.py   # WebAuthn stubs
+└── Dockerfile
+```
+
+### Storage Keys
+
+| Key | Type | Purpose |
+|-----|------|---------|
+| `pin` | Object | PBKDF2-hashed PIN data |
+| `recovery_batches` | Array | Hashed recovery code batches |
+| `gc_backend_url` | String | Backend API URL |
+| `gc_api_token` | String | Backend auth token |
+| `gc_xp_state` | Object | `{dayKey, xp, level}` |
+| `gc_fast_mode` | Boolean | Dev fast mode toggle |
+
+### Makefile Targets
+
+```bash
+make up          # Start services
+make down        # Stop services
+make logs        # View logs
+make clean       # Stop and remove volumes
+make db-reset    # Reset database schema
+make pull        # Pull fresh images
+```
+
+---
+
+*GuardianCore v0.4.5 - Privacy-First Parental Controls*
+
+### [0.4.5] - October 9, 2025
 
 **Added:**
-- Domain & global scheduled time windows with `action` (block / allow)
-- Allow-only windows (outside window implicitly blocked)
-- Mandatory reason field for all rule types
-- Rule timestamps & scope label (24h vs Window)
-- `make db-reset` developer convenience target
+- Per-domain scheduled time windows with `action` ("block" | "allow") and optional `domain` field
+- Allow-only window semantics (outside window = implicitly blocked for that domain)
+- Mandatory reason field for all rule types with UI validation
+- Rule timestamps & scope labels ("Window" vs "24h") in UI
+- `make db-reset` target for developer convenience
+- `make pull` target for explicit image pulling
+- 307 redirect resolution (removed trailing slashes from backend routes)
+- Docker troubleshooting documentation and stability improvements
 
 **Changed:**
-- Time window pattern JSON now includes `action` and optional `domain`
-- Formatter shows `[BLOCK window]` or `[ALLOW window]` plus domain if present
+- Time window pattern JSON format now includes `action` and `domain` fields
+- Rule card formatter displays domain + action tags (e.g., `tiktok.com [BLOCK window]`)
+- Domain field always visible in time window form (labeled "optional for global")
+- Backend routes no longer use trailing slashes (`/rules` not `/rules/`)
 
 **Fixed:**
-- Domain-specific windows no longer apply globally
+- Domain-specific windows no longer apply globally (precise hostname matching)
+- 307 Temporary Redirect eliminated (direct 200 OK responses)
+- Docker compose startup failures due to stale container image references
+- Postgres volume persistence across restarts
 
-### [0.4.4] - 2025-10-04
+### [0.4.4] - October 4, 2025
 
 **Added:**
-- XP balance tuning: tracker penalty -0.5 (max -2.5), negative floor -5
-- Simplified recovery codes UI (one-time display only)
+- XP balance tuning: tracker penalty reduced to −0.5 per tracker (max −2.5)
+- Negative XP floor raised from −7 to −5 (gentler penalties)
+- Simplified recovery codes UI (one-time display only, no persistent table)
 
 **Removed:**
 - Recovery status table (reduced sensitive code exposure)
@@ -826,37 +844,37 @@ chrome.runtime.sendMessage({ type: "REFRESH_RULES" })
 **Fixed:**
 - Edge cases around used recovery code visibility
 
-### [0.4.3] - 2025-10-04
+### [0.4.3] - October 4, 2025
 
 **Added:**
 - XP-only gamification system (removed risk score & safe streak)
-- XP farming prevention (30-second per-URL cooldown)
-- "How you earn XP" explanation in popup
-- "Remaining XP to next level" indicator
+- XP farming prevention via 30-second per-URL cooldown
+- "How you earn XP" explanation list in popup
+- "X XP to next level" indicator
 - Dev Reset XP button
 - Auto-refresh rules after backend config save
 - Extracted XP styles to dedicated `xp.css`
 
 **Fixed:**
-- XP not increasing (tracker count captured before reset)
+- XP not increasing (tracker count now captured before reset)
 - PIN creation hanging (hashPin auto-generates salt)
-- Recovery codes not downloading (batch structure fixed)
+- Recovery codes not downloading (batch structure corrected)
 - Rules not loading after config save (auto-refresh implemented)
 - XP farming via refresh spam (cooldown system)
 
 **Changed:**
-- Popup UI: Removed streak/risk, focused on XP progress
+- Popup UI: Removed streak/risk displays, focused on XP progress
 - Background: Simplified to XP-only logic
 - Documentation: Merged into single comprehensive guide
 
 **Removed:**
 - Risk score polling & display
-- Safe streak accumulation & heartbeat
+- Safe streak accumulation & heartbeat timers
 - Time-left nudges
 - Risk breakdown dev panel
 - Unused storage keys: `browserStartTime`, `gc_active_ms`
 
-### [0.4.2] - 2025-10-04
+### [0.4.2] - October 4, 2025
 
 **Added:**
 - Active-time safe streak (replaced elapsed time model)
@@ -871,18 +889,18 @@ chrome.runtime.sendMessage({ type: "REFRESH_RULES" })
 - Heartbeat interval (5 min normal / 10s fast mode)
 - Export/Import endpoints to `/rules/all/export` & `/rules/all/import`
 
-### [0.4.1] - 2025-10-04
+### [0.4.1] - October 4, 2025
 
 **Security Fixes:**
-- Recovery code regeneration now requires PIN
-- Closed unauthorized access loophole
+- Recovery code regeneration now requires PIN verification
+- Closed unauthorized access loophole (critical)
 
 **UX Improvements:**
 - First-time PIN setup flow cleaned up
 - Forgot PIN flow with format validation
-- Error messages with emojis
+- Error messages with emoji indicators
 
-### [0.4.0] - 2025-10-04
+### [0.4.0] - October 3, 2025
 
 **Initial Week 4 Release:**
 - PBKDF2 PIN storage (310k iterations)
@@ -891,14 +909,14 @@ chrome.runtime.sendMessage({ type: "REFRESH_RULES" })
 - Safe streak tracking
 - Real-time background updates (30s polling)
 - Role separation (parent options vs child popup)
-- Rule explanations removed
-- Factory reset
+- Rule explanations removed (security)
+- Factory reset functionality
 
 ---
 
-## 🧱 Storage Keys Reference
+## Storage Keys Reference
 
-### Active Keys (v0.4.3)
+### Active Keys (v0.4.5)
 
 | Key | Type | Purpose |
 |-----|------|---------|
@@ -906,20 +924,20 @@ chrome.runtime.sendMessage({ type: "REFRESH_RULES" })
 | `recovery_batches` | Array | Hashed recovery code batches |
 | `gc_backend_url` | String | Backend API URL |
 | `gc_api_token` | String | Backend auth token |
-| `gc_xp_state` | Object | { dayKey, xp, level } |
+| `gc_xp_state` | Object | `{dayKey, xp, level}` |
 | `gc_fast_mode` | Boolean | Dev fast mode toggle |
 
 ### Deprecated Keys (Safe to Remove)
 
 | Key | Reason | Since |
 |-----|--------|-------|
-| `browserStartTime` | Streak system removed | 0.4.3 |
-| `gc_active_ms` | Streak system removed | 0.4.3 |
-| `lastViolation` | Only used for XP penalty now | 0.4.3 |
+| `browserStartTime` | Streak system removed | v0.4.3 |
+| `gc_active_ms` | Streak system removed | v0.4.3 |
+| `lastViolation` | Only used for XP penalty now | v0.4.3 |
 
 ---
 
-## 🚀 Future Enhancements
+## Future Enhancements
 
 ### Backlog
 
@@ -927,8 +945,9 @@ chrome.runtime.sendMessage({ type: "REFRESH_RULES" })
 - [ ] Achievement badges (first clean day, 5 consecutive safe pages, etc.)
 - [ ] Rate limiting on PIN attempts
 - [ ] WebAuthn implementation (replace stubs)
-- [ ] Sunset `/risk/score` backend endpoint (unused since 0.4.3)
-- [ ] Optional positive streak multiplier (if simple enough)
+- [ ] Sunset `/risk/score` backend endpoint (unused since v0.4.3)
+- [ ] Multiple time windows per domain (aggregated logic)
+- [ ] Minute-level scheduling granularity
 - [ ] Persistent notification for level-ups
 - [ ] XP delta toast ("+5 XP" near progress bar)
 
@@ -941,18 +960,23 @@ chrome.runtime.sendMessage({ type: "REFRESH_RULES" })
 - [x] Recovery code download fixes
 - [x] Dev Reset XP button
 - [x] Extract XP styles to CSS
+- [x] Per-domain scheduled windows
+- [x] Mandatory reasons
+- [x] Rule timestamps & scope tags
+- [x] 307 redirect elimination
+- [x] Docker stability improvements
 
 ---
 
-## 📝 Developer Notes
+## Developer Notes
 
 ### XP System Architecture
 
-**Local-First Design:** All XP logic runs in `background.js` service worker. No server calls, instant feedback.
+**Local-First:** All XP logic in `background.js` service worker. No server calls, instant feedback.
 
-**Daily Reset:** Uses UTC ISO date string (`YYYY-MM-DD`) as key. Checked on every XP mutation and GET_XP_STATE request.
+**Daily Reset:** UTC ISO date string (`YYYY-MM-DD`) as key. Checked on every XP mutation.
 
-**Cooldown Map:** `Map<url, timestamp>` tracks last XP award per URL. Limited to 100 entries to prevent memory leak.
+**Cooldown Map:** `Map<url, timestamp>` tracks last award per URL. Limited to 100 entries to prevent memory leak.
 
 ### Code Organization
 
@@ -964,6 +988,19 @@ app-extension/
 ├── crypto.js        # PBKDF2, recovery codes, salt generation
 ├── xp.css           # XP bar & explanation styles
 └── manifest.json    # Extension config, permissions
+
+backend/
+├── src/app/
+│   ├── main.py           # FastAPI app, CORS, startup
+│   ├── config.py         # Settings & environment
+│   ├── db.py             # Database models & init
+│   └── routers/
+│       ├── health.py     # Health checks
+│       ├── rules.py      # Rules CRUD & export/import
+│       ├── audit.py      # Audit submission & stats
+│       ├── risk.py       # Risk scoring (deprecated)
+│       └── webauthn.py   # WebAuthn stubs
+└── Dockerfile
 ```
 
 ### Testing Checklist
@@ -976,7 +1013,13 @@ app-extension/
 - [ ] XP cooldown prevents refresh farming
 - [ ] Dev tools work (simulate violation, reset XP)
 - [ ] Daily XP resets at UTC day boundary
+- [ ] Per-domain time windows work correctly
+- [ ] Domain-specific rules don't affect other domains
+- [ ] Allow windows block access outside window
+- [ ] Global curfew blocks all sites (except allowlist)
+- [ ] Backend returns 200 OK (no 307 redirects)
+- [ ] Docker compose starts cleanly after restart
 
 ---
 
-*GuardianCore v0.4.3 - Privacy-First Parental Controls*
+*GuardianCore v0.4.5 - Privacy-First Parental Controls with Flexible Scheduling*
