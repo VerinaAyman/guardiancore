@@ -77,7 +77,7 @@ function setupTabs() {
   tabs.forEach(tab => {
     tab.addEventListener("click", () => {
       const targetTab = tab.dataset.tab;
-      
+
       // Update active tab button with CSS
       document.querySelectorAll(".tab-btn").forEach(t => {
         t.classList.remove("active");
@@ -87,7 +87,7 @@ function setupTabs() {
       tab.classList.add("active");
       tab.style.borderBottom = "2px solid var(--gc-accent)";
       tab.style.color = "var(--gc-accent)";
-      
+
       // Update active tab content
       document.querySelectorAll(".tab-content").forEach(c => c.style.display = "none");
       const content = document.getElementById(`${targetTab}-tab`);
@@ -348,24 +348,42 @@ async function loadRules() {
   try {
     // Fetch ALL rules so that disabling doesn't make them disappear (user thought it was deleting)
     const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/?enabled_only=false`, {
-      headers: {
-        "Authorization": `Bearer ${gc_api_token}`
-      }
+      headers: gc_api_token ? { "Authorization": `Bearer ${gc_api_token}` } : {}
     });
-    
+
     if (!response.ok) {
-      rulesList.innerHTML = '<div class="empty-state">Failed to load rules</div>';
+      let errorDetail = `HTTP ${response.status}`;
+      if (response.status === 401) {
+        errorDetail = "Unauthorized – check API token";
+      } else if (response.status === 403) {
+        errorDetail = "Forbidden – your token lacks access";
+      }
+      try {
+        const errorBody = await response.json();
+        if (errorBody?.detail) {
+          errorDetail = errorBody.detail;
+        }
+      } catch (_err) {
+        // Response body not JSON; ignore and keep default detail
+      }
+      rulesList.innerHTML = `<div class="empty-state">Failed to load rules (${errorDetail})</div>`;
       return;
     }
-    
-    const rules = await response.json();
-    
-    if (rules.length === 0) {
+
+    let rules;
+    try {
+      rules = await response.json();
+    } catch (_parseErr) {
+      rulesList.innerHTML = '<div class="empty-state">Failed to read rules response</div>';
+      return;
+    }
+
+    if (!Array.isArray(rules) || rules.length === 0) {
       rulesList.innerHTML = '<div class="empty-state">No rules yet. Add one above!</div>';
       return;
     }
     
-    const html = rules.map(rule => {
+  const html = rules.map(rule => {
       const badgeClass = `badge-${rule.rule_type}`;
       const enabledBadge = rule.enabled ? 
         '<span class="badge badge-enabled">Enabled</span>' : 
@@ -419,7 +437,8 @@ async function loadRules() {
     attachRuleActionHandlers();
   } catch (e) {
     console.error("Failed to load rules:", e);
-    rulesList.innerHTML = '<div class="empty-state">Error loading rules</div>';
+    const detail = e instanceof Error && e.message ? e.message : 'Unexpected error';
+    rulesList.innerHTML = `<div class="empty-state">Failed to load rules (${detail})</div>`;
   }
 }
 
