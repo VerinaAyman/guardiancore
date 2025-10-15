@@ -22,14 +22,32 @@ class AuditRecord(BaseModel):
     check_type: str = Field(max_length=64)
     policy_state: PolicyState
     client: Optional[Dict[str, Any]] = None
+    user_id: Optional[int] = None  # Track which user generated this audit
 
-def require_bearer(authorization: Optional[str] = Header(default=None)):
+def require_bearer(authorization: Optional[str] = Header(default=None)) -> Optional[int]:
+    """Accept either a pre-shared API token (existing behaviour) OR a valid user JWT.
+
+    This relaxes the restriction so the browser extension can call /audit endpoints
+    with the same JWT it already holds after /auth/login. If neither credential
+    form validates we raise 401.
+    
+    Returns user_id if JWT is used, None if API token is used.
+    """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
     token = authorization.split(" ", 1)[1].strip()
-    if token not in settings.gc_api_tokens:
+
+    # Fast-path: existing API token list
+    if token in settings.gc_api_tokens:
+        return None  # API token doesn't have user_id
+
+    # Attempt JWT validation (import lazily to avoid cycle)
+    try:
+        from .auth import verify_jwt_token  # type: ignore
+        payload = verify_jwt_token(token)
+        return payload.get("user_id")  # Return user_id from JWT
+    except Exception:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="unauthorized")
-    return token
 
 def _ensure_dict(obj) -> Dict[str, Any]:
     """asyncpg usually returns dict for JSON; if not, coerce safely."""
@@ -80,7 +98,7 @@ async def submit_audit(
             
             # Insert audit record
             stmt = insert(audit_events).values(
-                user_id=None,
+                user_id=record.user_id,  # Store user_id from the extension
                 origin_hash=record.origin_hash,
                 ts=datetime.utcnow(),
                 client_ts=record.ts_iso,
@@ -98,8 +116,8 @@ async def submit_audit(
                             detail="Failed to submit audit record")
 
 @router.get("/recent")
-async def recent_audits(_=Depends(require_bearer), limit: int = 10):
-    """Get recent audit records."""
+async def recent_audits(user_id: Optional[int] = Depends(require_bearer), limit: int = 10):
+    """Get recent audit records filtered by authenticated user."""
     try:
         limit = max(1, min(int(limit), 100))
         async with async_session() as session:
@@ -114,6 +132,11 @@ async def recent_audits(_=Depends(require_bearer), limit: int = 10):
                 .order_by(audit_events.c.ts.desc())
                 .limit(limit)
             )
+            
+            # Filter by user_id if JWT is used (not API token)
+            if user_id is not None:
+                q = q.where(audit_events.c.user_id == user_id)
+            
             res = await session.execute(q)
 
             items = []
@@ -135,8 +158,8 @@ async def recent_audits(_=Depends(require_bearer), limit: int = 10):
                             detail="Failed to get recent audits")
 
 @router.get("/stats")
-async def audit_stats(_=Depends(require_bearer), window_hours: Optional[int] = None):
-    """Get audit statistics and trends."""
+async def audit_stats(user_id: Optional[int] = Depends(require_bearer), window_hours: Optional[int] = None):
+    """Get audit statistics and trends filtered by authenticated user."""
     try:
         async with async_session() as session:
             q = select(
@@ -144,6 +167,11 @@ async def audit_stats(_=Depends(require_bearer), window_hours: Optional[int] = N
                 audit_events.c.ts,
                 audit_events.c.policy_state,
             )
+            
+            # Filter by user_id if JWT is used (not API token)
+            if user_id is not None:
+                q = q.where(audit_events.c.user_id == user_id)
+            
             if window_hours is not None:
                 hours = max(1, int(window_hours))
                 since = datetime.utcnow() - timedelta(hours=hours)

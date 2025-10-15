@@ -1,805 +1,1509 @@
-// GuardianCore Options Page - Parent Settings with Hardened PIN & Recovery Codes
-// Week 4: PBKDF2 PIN storage, 10 recovery codes, factory reset
+// GuardianCore Options - Complete v0.5.3
+console.log("[Options] Script starting v0.5.3...");
 
-// Import crypto utilities
-import * as crypto from './crypto.js';
+// Current user state
+let currentUser = null;
+let children = [];
+let groups = [];
+let pin = null;
+let recoveryCodes = [];
+let isPINVerified = false;
 
-console.log("[Options] Script starting v0.4.4...");
-console.log("[Options] Crypto module loaded:", crypto);
+// Backend URL
+let backendUrl = 'http://localhost:8000';
 
-let isUnlocked = false;
-let selectedDays = [0, 1, 2, 3, 4, 5, 6]; // All days by default
+// ========== AUTHENTICATION ==========
 
-// PIN verification using PBKDF2
-async function checkStoredPIN() {
-  const { pin } = await chrome.storage.local.get("pin");
-  return pin || null;
-}
-
-async function verifyPIN(inputPIN) {
-  const storedPin = await checkStoredPIN();
-  
-  if (!storedPin) {
-    // No PIN set yet - first time setup
-    return { firstTime: true };
-  }
-  
-  const isValid = await crypto.verifyPin(inputPIN, storedPin);
-  return { valid: isValid, firstTime: false };
-}
-
-// Show/hide main content
-function showMainContent() {
-  document.getElementById("lock-screen").classList.add("hidden");
-  document.getElementById("main-content").classList.remove("hidden");
-  isUnlocked = true;
-  
-  // Setup button handlers AFTER unlocking
-  setupButtonHandlers();
-  
-  loadSettings();
-  loadRules();
-}
-
-function showStatus(elementId, message, type) {
-  const el = document.getElementById(elementId);
-  if (!el) return;
-  el.textContent = message;
-  el.className = `status status-${type}`;
-  el.classList.remove("hidden");
-  
-  if (type === "success") {
-    setTimeout(() => el.classList.add("hidden"), 5000);
-  }
-}
-
-// Initialize on load
-document.addEventListener("DOMContentLoaded", async () => {
-  console.log("[Options] DOM loaded");
-  
-  // Tab navigation
-  setupTabs();
-  
-  // Check if PIN exists
-  const storedPin = await checkStoredPIN();
-  
-  if (!storedPin) {
-    // First time - show PIN creation
-    showPINCreation();
-  } else {
-    // Show PIN entry
-    showPINEntry();
-  }
-});
-
-function setupTabs() {
-  const tabs = document.querySelectorAll(".tab-btn");
-  tabs.forEach(tab => {
-    tab.addEventListener("click", () => {
-      const targetTab = tab.dataset.tab;
-
-      // Update active tab button with CSS
-      document.querySelectorAll(".tab-btn").forEach(t => {
-        t.classList.remove("active");
-        t.style.borderBottom = "2px solid transparent";
-        t.style.color = "var(--gc-text-dim)";
-      });
-      tab.classList.add("active");
-      tab.style.borderBottom = "2px solid var(--gc-accent)";
-      tab.style.color = "var(--gc-accent)";
-
-      // Update active tab content
-      document.querySelectorAll(".tab-content").forEach(c => c.style.display = "none");
-      const content = document.getElementById(`${targetTab}-tab`);
-      if (content) content.style.display = "block";
-    });
-  });
-}
-
-function showPINCreation() {
-  document.getElementById("lock-screen").classList.remove("hidden");
-  document.getElementById("main-content").classList.add("hidden");
-  document.getElementById("pin-hint").textContent = "Create your parent PIN to secure these settings";
-  
-  const unlockBtn = document.getElementById("unlock-btn");
-  unlockBtn.textContent = "Create PIN";
-  
-  unlockBtn.onclick = async () => {
-    const pin = document.getElementById("pin-input").value;
-    
-    if (!pin || pin.length < 4) {
-      document.getElementById("pin-error").textContent = "PIN must be at least 4 digits";
-      document.getElementById("pin-error").classList.remove("hidden");
-      return;
-    }
-    
-    const confirmPin = prompt("Confirm your PIN:");
-    if (pin !== confirmPin) {
-      document.getElementById("pin-error").textContent = "PINs don't match";
-      document.getElementById("pin-error").classList.remove("hidden");
-      return;
-    }
-    
-    // Hash PIN with PBKDF2
-    const hashedPin = await crypto.hashPin(pin);
-    await chrome.storage.local.set({ pin: hashedPin });
-    
-    // Generate recovery codes
-    const batch = await crypto.createRecoveryBatch();
-    
-    // Show codes to user (ONLY TIME)
-    const codes = batch.codes.map(c => c.plaintext).join("\n");
-    alert(`⚠️ SAVE THESE RECOVERY CODES NOW!\n\nThey will only be shown once:\n\n${codes}\n\nStore them securely offline.`);
-    
-    // Remove plaintext from storage immediately
-    batch.codes.forEach(c => delete c.plaintext);
-    await chrome.storage.local.set({ recovery_batches: [batch] });
-    
-    showMainContent();
-  };
-  
-  // Forgot PIN button
-  document.getElementById("forgot-pin-btn").onclick = forgotPIN;
-}
-
-function showPINEntry() {
-  document.getElementById("lock-screen").classList.remove("hidden");
-  document.getElementById("main-content").classList.add("hidden");
-  document.getElementById("pin-hint").textContent = "";
-  
-  const unlockBtn = document.getElementById("unlock-btn");
-  unlockBtn.textContent = "Unlock";
-  
-  unlockBtn.onclick = async () => {
-    const pin = document.getElementById("pin-input").value;
-    const result = await verifyPIN(pin);
-    
-    if (result.valid) {
-      showMainContent();
-    } else {
-      document.getElementById("pin-error").textContent = "Incorrect PIN";
-      document.getElementById("pin-error").classList.remove("hidden");
-    }
-  };
-  
-  // Forgot PIN button
-  document.getElementById("forgot-pin-btn").onclick = forgotPIN;
-}
-
-async function forgotPIN() {
-  const code = prompt("🔑 Enter recovery code (format: XXXX-XXXX-XXXX):");
-  if (!code) return;
-  
-  // Validate format
-  if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(code)) {
-    alert("❌ Invalid format. Use: XXXX-XXXX-XXXX");
-    return;
-  }
-  
-  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
-  
-  let verified = false;
-  let batchToUpdate = null;
-  
-  for (const batch of recovery_batches) {
-    if (!batch.active) continue;
-    
-    for (const recoveryCode of batch.codes) {
-      if (recoveryCode.used) continue;
-      
-      const isValid = await crypto.verifyRecoveryCode(code, recoveryCode.hash, recoveryCode.salt);
-      if (isValid) {
-        verified = true;
-        recoveryCode.used = true;
-        recoveryCode.used_at = new Date().toISOString();
-        batchToUpdate = batch;
-        break;
-      }
-    }
-    if (verified) break;
-  }
-  
-  if (!verified) {
-    alert("❌ Invalid or already used recovery code");
-    return;
-  }
-  
-  // Save updated batch
-  await chrome.storage.local.set({ recovery_batches });
-  
-  alert("✅ Recovery code verified!");
-  
-  // Reset PIN
-  const newPin = prompt("Enter your new PIN (at least 4 digits):");
-  if (!newPin || newPin.length < 4) {
-    alert("❌ PIN must be at least 4 digits");
-    return;
-  }
-  
-  const confirmPin = prompt("Confirm your new PIN:");
-  if (newPin !== confirmPin) {
-    alert("❌ PINs don't match");
-    return;
-  }
-  
-  await crypto.storePin(newPin);
-  alert("✅ PIN reset successfully! New PIN stored.");
-  
-  // Auto-unlock
-  showMainContent();
-}
-
-function setupButtonHandlers() {
-  // Save settings
-  document.getElementById("save-backend-btn")?.addEventListener("click", saveSettings);
-  
-  // Add rule
-  document.getElementById("add-rule-btn")?.addEventListener("click", addRule);
-
-  // Rule type toggle show/hide inputs
-  const ruleTypeSelect = document.getElementById("rule-type");
-  const domainGroup = document.getElementById("domain-input-group");
-  const timeGroup = document.getElementById("time-input-group");
-  if (ruleTypeSelect) {
-    ruleTypeSelect.addEventListener("change", () => {
-      if (ruleTypeSelect.value === "time_window") {
-        // Show both: domain (optional) + time window config
-        domainGroup.classList.remove("hidden");
-        timeGroup.classList.remove("hidden");
-        domainGroup.querySelector('label').textContent = 'Domain Pattern (optional for global)';
-      } else {
-        domainGroup.classList.remove("hidden");
-        timeGroup.classList.add("hidden");
-        domainGroup.querySelector('label').textContent = 'Domain Pattern';
-      }
-    });
-  }
-
-  // Day buttons selection logic
-  document.querySelectorAll('.day-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const day = parseInt(btn.dataset.day, 10);
-      if (btn.classList.contains('selected')) {
-        btn.classList.remove('selected');
-        selectedDays = selectedDays.filter(d => d !== day);
-      } else {
-        btn.classList.add('selected');
-        if (!selectedDays.includes(day)) selectedDays.push(day);
-        selectedDays.sort((a,b)=>a-b);
-      }
-    });
-  });
-  
-  // Change PIN
-  document.getElementById("change-pin-btn")?.addEventListener("click", changePIN);
-  // Fast mode toggle
-  const fastToggle = document.getElementById("fast-mode-toggle");
-  if (fastToggle) {
-    chrome.storage.local.get(["gc_fast_mode"]).then(({ gc_fast_mode }) => {
-      fastToggle.checked = !!gc_fast_mode;
-    });
-    fastToggle.addEventListener("change", () => {
-      chrome.storage.local.set({ gc_fast_mode: fastToggle.checked }).then(() => {
-        showStatus("options-status", fastToggle.checked ? "Fast mode enabled" : "Fast mode disabled", "info");
-        // Notify background to pick up change immediately
-        chrome.runtime.sendMessage({ type: "DEV_TOGGLE_FAST_MODE" });
-      });
-    });
-  }
-  
-  // Regenerate recovery codes
-  document.getElementById("regenerate-codes-btn")?.addEventListener("click", regenerateRecoveryCodes);
-  
-  // Export rules
-  document.getElementById("export-rules-btn")?.addEventListener("click", exportRules);
-  
-  // Import rules
-  document.getElementById("import-rules-btn")?.addEventListener("click", () => {
-    document.getElementById("import-file-input").click();
-  });
-  
-  document.getElementById("import-file-input")?.addEventListener("change", importRules);
-  
-  // Factory reset
-  document.getElementById("factory-reset-btn")?.addEventListener("click", factoryReset);
-}
-
-async function saveSettings() {
-  const backendUrl = document.getElementById("backend-url").value.trim();
-  const apiToken = document.getElementById("api-token").value.trim();
-  
-  await chrome.storage.local.set({
-    gc_backend_url: backendUrl,
-    gc_api_token: apiToken
-  });
-  
-  showStatus("backend-status", "✅ Settings saved successfully", "success");
-  
-  // Auto-load rules immediately after config save
-  await loadRules();
-  
-  // Notify background to fetch rules with new config
-  chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
-}
-
-async function loadSettings() {
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
-    "gc_backend_url",
-    "gc_api_token"
-  ]);
-  
-  if (gc_backend_url) document.getElementById("backend-url").value = gc_backend_url;
-  if (gc_api_token) document.getElementById("api-token").value = gc_api_token;
-}
-
-async function loadRules() {
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
-    "gc_backend_url",
-    "gc_api_token"
-  ]);
-  
-  const rulesList = document.getElementById("rules-list");
-  
-  if (!gc_backend_url) {
-    rulesList.innerHTML = '<div class="empty-state">Configure backend first</div>';
-    return;
-  }
-  
+async function checkAuth() {
   try {
-    // Fetch ALL rules so that disabling doesn't make them disappear (user thought it was deleting)
-    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/?enabled_only=false`, {
-      headers: gc_api_token ? { "Authorization": `Bearer ${gc_api_token}` } : {}
+    const storage = await chrome.storage.local.get([
+      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username', 'gc_email', 'gc_backend_url', 'gc_pin', 'gc_recovery_codes', 'gc_api_token', 'gc_config_initialized'
+    ]);
+    
+    // Auto-configure defaults if not initialized
+    if (!storage.gc_config_initialized) {
+      const defaults = {};
+      
+      if (!storage.gc_backend_url) {
+        defaults.gc_backend_url = 'http://localhost:8000';
+        storage.gc_backend_url = 'http://localhost:8000';
+      }
+      
+      if (!storage.gc_api_token) {
+        defaults.gc_api_token = 'dev-token-123';
+      }
+      
+      defaults.gc_config_initialized = true;
+      await chrome.storage.local.set(defaults);
+      console.log("[Options] Auto-configured defaults");
+    }
+    
+    if (storage.gc_backend_url) backendUrl = storage.gc_backend_url;
+    
+    if (!storage.gc_auth_token) {
+      redirectToLogin();
+      return false;
+    }
+    
+    // Verify token
+    const response = await fetch(`${backendUrl}/auth/verify`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${storage.gc_auth_token}` }
     });
-
+    
     if (!response.ok) {
-      let errorDetail = `HTTP ${response.status}`;
-      if (response.status === 401) {
-        errorDetail = "Unauthorized – check API token";
-      } else if (response.status === 403) {
-        errorDetail = "Forbidden – your token lacks access";
-      }
-      try {
-        const errorBody = await response.json();
-        if (errorBody?.detail) {
-          errorDetail = errorBody.detail;
-        }
-      } catch (_err) {
-        // Response body not JSON; ignore and keep default detail
-      }
-      rulesList.innerHTML = `<div class="empty-state">Failed to load rules (${errorDetail})</div>`;
-      return;
-    }
-
-    let rules;
-    try {
-      rules = await response.json();
-    } catch (_parseErr) {
-      rulesList.innerHTML = '<div class="empty-state">Failed to read rules response</div>';
-      return;
-    }
-
-    if (!Array.isArray(rules) || rules.length === 0) {
-      rulesList.innerHTML = '<div class="empty-state">No rules yet. Add one above!</div>';
-      return;
+      redirectToLogin();
+      return false;
     }
     
-  const html = rules.map(rule => {
-      const badgeClass = `badge-${rule.rule_type}`;
-      const enabledBadge = rule.enabled ? 
-        '<span class="badge badge-enabled">Enabled</span>' : 
-        '<span class="badge badge-disabled">Disabled</span>';
-      
-      const pattern = rule.rule_type === "time_window" ? 
-        formatTimeWindow(rule.pattern) : 
-        rule.pattern;
-      // Created timestamp & scope descriptor
-      let createdStr = '';
-      try {
-        if (rule.created_at) {
-          const raw = typeof rule.created_at === 'string' ? rule.created_at : (rule.created_at.toString());
-          const d = new Date(raw);
-          // Use local date/time short format
-          if (!isNaN(d.getTime())) {
-            createdStr = d.toLocaleString(undefined, { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-          }
-        }
-      } catch { /* ignore */ }
-      const scopeStr = rule.rule_type === 'time_window' ? 'Window' : '24h';
-      
-      return `
-        <div class="rule-card" data-rule-id="${rule.id}">
-          <div class="rule-header">
-            <div class="rule-info">
-              <h4>${pattern}</h4>
-              <div class="rule-meta">
-                <span class="badge ${badgeClass}">${rule.rule_type}</span>
-                ${enabledBadge}
-                ${rule.category ? `<span class=\"badge\">${rule.category}</span>` : ''}
-              </div>
-              <div class="rule-timestamp" style="margin-top:4px;color:var(--gc-text-dim);font-size:12px;">
-                <span>${scopeStr}</span>
-                ${createdStr ? ` • <span>Created ${createdStr}</span>` : ''}
-              </div>
-            </div>
-            <div class="rule-actions">
-              <button class="secondary rule-toggle-btn" data-rule-id="${rule.id}" data-new-enabled="${!rule.enabled}">
-                ${rule.enabled ? 'Disable' : 'Enable'}
-              </button>
-              <button class="danger rule-delete-btn" data-rule-id="${rule.id}">Delete</button>
-            </div>
-          </div>
-          ${rule.explanation ? `<p style=\"margin-top:8px;color:var(--gc-text-dim);font-size:13px;\">${rule.explanation}</p>` : ''}
-        </div>
-      `;
-    }).join("");
+    const data = await response.json();
     
-    rulesList.innerHTML = html;
-    attachRuleActionHandlers();
-  } catch (e) {
-    console.error("Failed to load rules:", e);
-    const detail = e instanceof Error && e.message ? e.message : 'Unexpected error';
-    rulesList.innerHTML = `<div class="empty-state">Failed to load rules (${detail})</div>`;
+    // Check if child account - redirect to child options
+    if (data.account_type === 'child') {
+      window.location.href = 'child-options.html';
+      return false;
+    }
+    
+    // Parent account - continue
+    currentUser = {
+      user_id: storage.gc_user_id,
+      username: storage.gc_username,
+      email: storage.gc_email,
+      account_type: storage.gc_account_type,
+      token: storage.gc_auth_token
+    };
+    
+    pin = storage.gc_pin;
+    recoveryCodes = storage.gc_recovery_codes || [];
+    
+    updateUserDisplay();
+    
+    return true;
+  } catch (error) {
+    console.error("[Auth] Check failed:", error);
+    redirectToLogin();
+    return false;
   }
 }
 
-function attachRuleActionHandlers() {
-  // Toggle buttons
-  document.querySelectorAll('.rule-toggle-btn').forEach(btn => {
-    btn.addEventListener('click', async (ev) => {
-      const id = parseInt(btn.dataset.ruleId, 10);
-      const newEnabled = btn.dataset.newEnabled === 'true';
-      btn.disabled = true;
-      btn.textContent = '...';
-      try {
-        await toggleRule(id, newEnabled);
-      } finally {
-        // Reload list will redraw buttons; no need to restore text here
-      }
-    });
+function redirectToLogin() {
+  chrome.tabs.create({ url: chrome.runtime.getURL('login.html') });
+  window.close();
+}
+
+function updateUserDisplay() {
+  const userNameEl = document.getElementById('user-name');
+  const userAvatarEl = document.getElementById('user-avatar');
+  
+  if (userNameEl && currentUser) {
+    userNameEl.textContent = currentUser.username;
+  }
+  
+  if (userAvatarEl && currentUser) {
+    userAvatarEl.textContent = currentUser.username.charAt(0).toUpperCase();
+  }
+}
+
+async function handleLogout() {
+  try {
+    await chrome.storage.local.remove([
+      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username', 'gc_email'
+    ]);
+    await chrome.runtime.sendMessage({ type: "LOGOUT" });
+    redirectToLogin();
+  } catch (error) {
+    console.error("[Logout] Failed:", error);
+  }
+}
+
+// ========== PIN SYSTEM ==========
+
+async function verifyPINOnLoad() {
+  // Check if PIN is set
+  const storage = await chrome.storage.local.get(['gc_pin', 'gc_pin_verified']);
+  
+  if (!storage.gc_pin) {
+    // No PIN set, show setup
+    await showPINSetup();
+    isPINVerified = true;
+    return true;
+  }
+  
+  // Check if already verified in this session
+  if (storage.gc_pin_verified) {
+    // Clear the verification flag (one-time use)
+    await chrome.storage.local.remove('gc_pin_verified');
+    isPINVerified = true;
+    pin = storage.gc_pin;
+    return true;
+  }
+  
+  // Redirect to PIN lock page for verification
+  window.location.href = 'pin-lock.html';
+  return false;
+}
+
+async function showPINSetup() {
+  const setupPIN = prompt('Set up a Parental Lock PIN (4-6 digits):');
+  if (!setupPIN || setupPIN.length < 4) {
+    alert('PIN must be at least 4 digits. Please try again.');
+    return showPINSetup();
+  }
+  
+  const confirmPIN = prompt('Confirm your PIN:');
+  if (setupPIN !== confirmPIN) {
+    alert('PINs do not match. Please try again.');
+    return showPINSetup();
+  }
+  
+  // Generate 10 recovery codes
+  recoveryCodes = generateRecoveryCodes(10);
+  
+  // Store PIN and recovery codes
+  await chrome.storage.local.set({
+    gc_pin: setupPIN,
+    gc_recovery_codes: recoveryCodes
   });
-  // Delete buttons
-  document.querySelectorAll('.rule-delete-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = parseInt(btn.dataset.ruleId, 10);
-      if (!confirm('Delete this rule?')) return;
-      btn.disabled = true;
-      btn.textContent = '...';
-      try {
-        await deleteRule(id);
-      } finally {
-        // UI refreshed by loadRules inside deleteRule
-      }
-    });
-  });
+  
+  pin = setupPIN;
+  
+  // Download recovery codes
+  downloadRecoveryCodes(recoveryCodes, 'guardiancore-recovery-codes-initial.txt');
+  
+  alert(`PIN set successfully!\n\nYour 10 Recovery Codes have been downloaded.\n\nSave this file in a secure location!`);
 }
 
-function formatTimeWindow(pattern) {
-  try {
-    const config = JSON.parse(pattern);
-    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const days = config.days || [];
-    const daysStr = days.length === 7 ? 'All Days' : days.map(d => dayNames[d]).join(', ');
-    const domainPart = config.domain ? `${config.domain} ` : '';
-    const actionPart = config.action === 'allow' ? '[ALLOW window]' : '[BLOCK window]';
-    return `${domainPart}${config.start_hour}:00-${config.end_hour}:00 ${actionPart} (${daysStr})`;
-  } catch {
-    return pattern;
+function generateRecoveryCodes(count) {
+  const codes = [];
+  for (let i = 0; i < count; i++) {
+    const code = Math.random().toString(36).substring(2, 10).toUpperCase();
+    codes.push(code);
   }
+  return codes;
 }
 
-async function addRule() {
-  const ruleType = document.getElementById("rule-type").value;
-  let pattern = document.getElementById("rule-pattern").value.trim();
+function downloadRecoveryCodes(codes, filename) {
+  const content = `GuardianCore Recovery Codes
+Generated: ${new Date().toLocaleString()}
 
-  // Explanation mandatory for all rule types now
-  const explanationInput = document.getElementById("rule-explanation");
-  const explanation = explanationInput ? explanationInput.value.trim() : '';
-  if (!explanation) {
-    showStatus("add-rule-status", "Reason is required", "error");
-    return;
-  }
+KEEP THESE CODES SECURE!
+You can use any of these codes to reset your PIN if forgotten.
 
-  if (ruleType === 'time_window') {
-    const startHour = parseInt(document.getElementById('start-hour').value, 10);
-    const endHour = parseInt(document.getElementById('end-hour').value, 10);
-    if (isNaN(startHour) || isNaN(endHour) || startHour < 0 || startHour > 23 || endHour < 0 || endHour > 23) {
-      showStatus("add-rule-status", "Start and End hours must be 0-23", "error");
-      return;
-    }
-    if (!selectedDays.length) {
-      showStatus("add-rule-status", "Select at least one day", "error");
-      return;
-    }
-    const actionSelect = document.getElementById('time-window-action');
-    const action = actionSelect ? actionSelect.value : 'block';
-    const domainInputVal = document.getElementById('rule-pattern').value.trim();
-    pattern = JSON.stringify({ start_hour: startHour, end_hour: endHour, days: selectedDays, action, domain: domainInputVal || null });
-  } else {
-    if (!pattern) {
-      showStatus("add-rule-status", "Domain pattern is required", "error");
-      return;
-    }
-  }
-  
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
-    "gc_backend_url",
-    "gc_api_token"
-  ]);
-  
-  if (!gc_backend_url) {
-    showStatus("add-rule-status", "Configure backend first", "error");
-    return;
-  }
-  
-  const category = document.getElementById("rule-category").value.trim();
-  // explanation already captured above
-  
-  try {
-    const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${gc_api_token}`
-      },
-      body: JSON.stringify({
-        rule_type: ruleType,
-        pattern: pattern,
-        category: category || null,
-  explanation: explanation,
-        enabled: true
-      })
-    });
-    
-    if (!response.ok) throw new Error("Failed to create rule");
-    
-    showStatus("add-rule-status", "✅ Rule created successfully", "success");
-    document.getElementById("rule-pattern").value = "";
-    document.getElementById("rule-category").value = "";
-  if (explanationInput) explanationInput.value = "";
-    loadRules();
-  } catch (e) {
-    console.error("Failed to add rule:", e);
-    showStatus("add-rule-status", "❌ Failed to create rule: " + e.message, "error");
-  }
-}
+${codes.map((code, idx) => `${idx + 1}. ${code}`).join('\n')}
 
-async function toggleRule(ruleId, enable) {
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
-    "gc_backend_url",
-    "gc_api_token"
-  ]);
+Each code can only be used once.
+Store this file in a safe place.
+`;
   
-  try {
-  const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}`, {
-      method: "PATCH",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${gc_api_token}`
-      },
-      body: JSON.stringify({ enabled: enable })
-    });
-    
-    if (!response.ok) throw new Error("Failed to toggle rule");
-    
-    loadRules();
-    chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
-  } catch (e) {
-    console.error("Failed to toggle rule:", e);
-    alert("Failed to toggle rule");
-  }
-}
-
-async function deleteRule(ruleId) {
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
-    "gc_backend_url",
-    "gc_api_token"
-  ]);
-  
-  try {
-  const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/${ruleId}`, {
-      method: "DELETE",
-      headers: {
-        "Authorization": `Bearer ${gc_api_token}`
-      }
-    });
-    
-    if (!response.ok) throw new Error("Failed to delete rule");
-    
-    loadRules();
-    chrome.runtime.sendMessage({ type: "REFRESH_RULES" });
-  } catch (e) {
-    console.error("Failed to delete rule:", e);
-    alert("Failed to delete rule");
-  }
-}
-
-// Make functions global
-window.toggleRule = toggleRule;
-window.deleteRule = deleteRule;
-
-async function changePIN() {
-  const currentPin = prompt("Enter your current PIN:");
-  if (!currentPin) return;
-  
-  const result = await verifyPIN(currentPin);
-  if (!result.valid) {
-    alert("Incorrect PIN");
-    return;
-  }
-  
-  const newPin = prompt("Enter your new PIN (at least 4 digits):");
-  if (!newPin || newPin.length < 4) {
-    alert("PIN must be at least 4 digits");
-    return;
-  }
-  
-  const confirmPin = prompt("Confirm your new PIN:");
-  if (newPin !== confirmPin) {
-    alert("PINs don't match");
-    return;
-  }
-  await crypto.storePin(newPin);
-  alert("✅ PIN changed successfully! New PIN is active.");
-}
-
-async function loadRecoveryStatus() {
-  // Simple status message - codes are only shown once during generation
-  const statusDiv = document.getElementById("recovery-status");
-  statusDiv.innerHTML = `
-    <div class="panel">
-      <p style="color:var(--gc-text-dim);line-height:1.6;">
-        Recovery codes are only displayed once during generation. Use the button below to generate new codes if needed.
-      </p>
-    </div>
-  `;
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 async function regenerateRecoveryCodes() {
-  const pin = prompt("⚠️ This will invalidate ALL existing recovery codes.\n\nEnter your PIN to confirm:");
-  if (!pin) return;
-  
-  const result = await verifyPIN(pin);
-  if (!result.valid) {
-    alert("❌ Incorrect PIN. Cannot regenerate codes.");
+  const enteredPIN = prompt('Enter your PIN to regenerate recovery codes:');
+  if (enteredPIN !== pin) {
+    alert('Incorrect PIN!');
     return;
   }
   
-  if (!confirm("Are you sure? All existing recovery codes will stop working.")) return;
+  // Generate new codes
+  const newCodes = generateRecoveryCodes(10);
   
-  // Generate new batch (this marks old batches inactive internally)
-  const newBatch = await crypto.createRecoveryBatch();
-  
-  // Show codes (only time)
-  const codes = newBatch.codes.map(c => c.plaintext).join("\n");
-  
-  // Remove plaintext from storage immediately after extraction
-  newBatch.codes.forEach(c => delete c.plaintext);
-  const { recovery_batches = [] } = await chrome.storage.local.get("recovery_batches");
-  await chrome.storage.local.set({ recovery_batches });
-  const codesText = `GuardianCore Recovery Codes
-Generated: ${new Date().toISOString()}
-Batch ID: ${newBatch.batch_id}
-
-SAVE THESE CODES SECURELY!
-Each code can only be used once.
-
-${codes}
-
----
-Store this file offline in a secure location.
-`;
-  
-  // Download as file
-  const date = new Date().toISOString().split('T')[0].replace(/-/g, '');
-  const filename = `guardian_recovery_codes_${date}_${newBatch.batch_id.substring(0, 8)}.txt`;
-  
-  const blob = new Blob([codesText], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  
-  chrome.downloads.download({
-    url: url,
-    filename: filename,
-    saveAs: true
-  }, () => {
-    URL.revokeObjectURL(url);
-    alert(`✅ Recovery codes generated and downloaded!\n\nFile: ${filename}\n\nKeep this file safe and offline.`);
+  // Store new codes and expire old ones
+  await chrome.storage.local.set({
+    gc_recovery_codes: newCodes
   });
+  
+  recoveryCodes = newCodes;
+  
+  // Download new codes
+  downloadRecoveryCodes(newCodes, `guardiancore-recovery-codes-${Date.now()}.txt`);
+  
+  alert('New Recovery Codes Generated!\n\nThe file has been downloaded.\n\nOld codes are now invalid. Save the new file!');
+  
+  displayRecoveryCodes();
 }
 
-async function exportRules() {
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
-    "gc_backend_url",
-    "gc_api_token"
-  ]);
+async function displayRecoveryCodes() {
+  const storage = await chrome.storage.local.get(['gc_recovery_codes', 'gc_pin']);
+  recoveryCodes = storage.gc_recovery_codes || [];
+  pin = storage.gc_pin || null;
   
-  if (!gc_backend_url) {
-    alert("Configure backend first");
+  const codesContainer = document.getElementById('recovery-codes-list');
+  if (codesContainer) {
+    if (recoveryCodes.length === 0 && !pin) {
+      codesContainer.innerHTML = '<p style="color:var(--gc-text-dim);">No recovery codes available. PIN not set up yet.</p>';
+    } else {
+      const maskedPIN = pin ? '•'.repeat(pin.length) : 'Not set';
+      codesContainer.innerHTML = `
+        <div class="card">
+          <h3 class="card-title">Current PIN</h3>
+          <div class="code-display" style="font-size:18px; letter-spacing:6px;">${maskedPIN}</div>
+          <p style="color:var(--gc-text-dim); margin-top:8px; font-size:13px;">Your parental lock PIN is active.</p>
+        </div>
+        
+        <div class="card mt-20">
+          <h3 class="card-title">Your Recovery Codes</h3>
+          ${recoveryCodes.length === 0 ? 
+            '<p style="color:var(--gc-text-dim);">No recovery codes available.</p>' :
+            `<div class="code-display" style="font-size:14px; letter-spacing:2px; text-align:left; padding:20px;">
+              ${recoveryCodes.map((code, idx) => `<div>${idx + 1}. ${code}</div>`).join('')}
+            </div>`
+          }
+          <p style="color:var(--gc-text-dim); margin-top:12px; font-size:13px;">Save these codes in a secure location. You can use any of these codes to reset your PIN if forgotten.</p>
+          <button class="btn mt-20" id="regenerate-codes-btn">Regenerate New Codes</button>
+        </div>
+      `;
+      
+      // Attach event listener to regenerate button
+      const regenBtn = document.getElementById('regenerate-codes-btn');
+      if (regenBtn) {
+        regenBtn.addEventListener('click', regenerateRecoveryCodes);
+      }
+    }
+  }
+}
+
+async function changePIN() {
+  const enteredPIN = prompt('Enter your current PIN:');
+  if (enteredPIN !== pin) {
+    alert('Incorrect PIN!');
+    return;
+  }
+  
+  const newPIN = prompt('Enter new PIN (4-6 digits):');
+  if (!newPIN || newPIN.length < 4) {
+    alert('PIN must be at least 4 digits.');
+    return;
+  }
+  
+  const confirmNewPIN = prompt('Confirm new PIN:');
+  if (newPIN !== confirmNewPIN) {
+    alert('PINs do not match.');
+    return;
+  }
+  
+  await chrome.storage.local.set({ gc_pin: newPIN });
+  pin = newPIN;
+  
+  alert('PIN changed successfully!');
+  displayRecoveryCodes();
+}
+
+// ========== PROFILE MANAGEMENT ==========
+
+async function loadProfile() {
+  const usernameEl = document.getElementById('profile-username');
+  const emailEl = document.getElementById('profile-email');
+  
+  if (usernameEl && currentUser) usernameEl.value = currentUser.username;
+  if (emailEl && currentUser) emailEl.value = currentUser.email;
+}
+
+async function saveProfile() {
+  const usernameEl = document.getElementById('profile-username');
+  const statusEl = document.getElementById('profile-status');
+  
+  const newUsername = usernameEl.value.trim();
+  
+  if (!newUsername) {
+    showStatus(statusEl, 'Username cannot be empty', 'error');
     return;
   }
   
   try {
-  const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/all/export`, {
+    const response = await fetch(`${backendUrl}/accounts/profile`, {
+      method: 'PATCH',
       headers: {
-        "Authorization": `Bearer ${gc_api_token}`
-      }
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({ username: newUsername })
     });
     
-    if (!response.ok) throw new Error("Failed to export");
+    if (!response.ok) throw new Error('Failed to update profile');
     
-    const data = await response.json();
-    const json = JSON.stringify(data, null, 2);
+    // Update storage
+    await chrome.storage.local.set({ gc_username: newUsername });
+    currentUser.username = newUsername;
+    updateUserDisplay();
     
-    const date = new Date().toISOString().split('T')[0];
-    const filename = `guardiancore_rules_${date}.json`;
-    
-    const blob = new Blob([json], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    
-    chrome.downloads.download({
-      url: url,
-      filename: filename,
-      saveAs: true
-    }, () => {
-      URL.revokeObjectURL(url);
-      showStatus("export-status", "✅ Rules exported successfully", "success");
-    });
-  } catch (e) {
-    console.error("Export failed:", e);
-    showStatus("export-status", "❌ Export failed: " + e.message, "error");
+    showStatus(statusEl, 'Profile updated successfully', 'success');
+  } catch (error) {
+    console.error("[Profile] Save failed:", error);
+    showStatus(statusEl, 'Failed to update profile', 'error');
   }
 }
 
-async function importRules(event) {
-  const file = event.target.files[0];
-  if (!file) return;
+async function changePassword() {
+  const currentPasswordEl = document.getElementById('current-password');
+  const newPasswordEl = document.getElementById('new-password');
+  const confirmPasswordEl = document.getElementById('confirm-password');
+  const statusEl = document.getElementById('password-status');
   
-  const reader = new FileReader();
-  reader.onload = async (e) => {
-    try {
-      const data = JSON.parse(e.target.result);
-      
-      const { gc_backend_url, gc_api_token } = await chrome.storage.local.get([
-        "gc_backend_url",
-        "gc_api_token"
-      ]);
-      
-      if (!gc_backend_url) {
-        alert("Configure backend first");
-        return;
-      }
-      
-      const response = await fetch(`${gc_backend_url.replace(/\/+$/, "")}/rules/all/import`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${gc_api_token}`
-        },
-        body: JSON.stringify(data)
-      });
-      
-      if (!response.ok) throw new Error("Import failed");
-      
-      const result = await response.json();
-      showStatus("import-status", `✅ Imported ${result.imported_count} rules`, "success");
-      loadRules();
-    } catch (e) {
-      console.error("Import failed:", e);
-      showStatus("import-status", "❌ Import failed: " + e.message, "error");
+  const currentPassword = currentPasswordEl.value.trim();
+  const newPassword = newPasswordEl.value.trim();
+  const confirmPassword = confirmPasswordEl.value.trim();
+  
+  if (!currentPassword || !newPassword || !confirmPassword) {
+    showStatus(statusEl, 'All password fields are required', 'error');
+    return;
+  }
+  
+  if (newPassword !== confirmPassword) {
+    showStatus(statusEl, 'New passwords do not match', 'error');
+    return;
+  }
+  
+  if (newPassword.length < 6) {
+    showStatus(statusEl, 'New password must be at least 6 characters', 'error');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${backendUrl}/accounts/change-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({
+        current_password: currentPassword,
+        new_password: newPassword
+      })
+    });
+    
+    if (!response.ok) {
+      let msg = 'Failed to change password';
+      let detail = '';
+      try { detail = (await response.json()).detail; } catch (_) {}
+      if (response.status === 401) msg = 'Current password incorrect';
+      else if (response.status === 403) msg = 'Only parent accounts can change password';
+      else if (response.status === 404) msg = 'Password change endpoint not found (backend mismatch)';
+      throw new Error(detail || msg);
     }
-  };
-  reader.readAsText(file);
+    
+    // Clear password fields
+    currentPasswordEl.value = '';
+    newPasswordEl.value = '';
+    confirmPasswordEl.value = '';
+    
+    showStatus(statusEl, 'Password changed successfully', 'success');
+  } catch (error) {
+    console.error("[Profile] Change password failed:", error);
+    showStatus(statusEl, error.message || 'Failed to change password', 'error');
+  }
 }
 
-async function factoryReset() {
-  const warning = "⚠️ This will erase:\n- Local rules cache\n- PIN\n- Recovery codes\n- All settings\n\nThis CANNOT be undone!";
-  
-  if (!confirm(warning)) return;
-  
-  if (!confirm("Are you ABSOLUTELY SURE? Type YES to confirm.") !== "YES") return;
-  
-  // Clear all storage
-  await chrome.storage.local.clear();
-  
-  // Reload extension
-  chrome.runtime.reload();
+// ========== CHILDREN MANAGEMENT ==========
+
+async function loadChildren() {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/children`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) throw new Error('Failed to load children');
+    
+    children = await response.json();
+    displayChildren();
+  } catch (error) {
+    console.error("[Children] Load failed:", error);
+  }
 }
+
+function displayChildren() {
+  const listEl = document.getElementById('children-list');
+  const emptyEl = document.getElementById('children-empty');
+  
+  if (!listEl) return;
+  
+  if (children.length === 0) {
+    listEl.innerHTML = '';
+    if (emptyEl) emptyEl.classList.remove('hidden');
+    return;
+  }
+  
+  if (emptyEl) emptyEl.classList.add('hidden');
+  
+  listEl.innerHTML = children.map(child => `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h3 class="card-title">${escapeHtml(child.username)}</h3>
+          <div style="margin-top:8px;">
+            <span class="badge badge-child">Child Account</span>
+          </div>
+          <div style="margin-top:12px; font-size:13px; color:var(--gc-text-dim);">
+            <strong>Access Code:</strong> <span class="code-display" style="font-size:18px; display:inline-block; margin-left:8px;">${child.access_code}</span>
+          </div>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-sm btn-danger" data-delete-child="${child.id}" data-child-name="${escapeHtml(child.username)}">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+  
+  // Attach delete handlers
+  listEl.querySelectorAll('[data-delete-child]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const childId = e.target.dataset.deleteChild;
+      const childName = e.target.dataset.childName;
+      if (confirm(`Delete ${childName}? This will delete all their rules and stats.`)) {
+        deleteChild(childId);
+      }
+    });
+  });
+}
+
+async function deleteChild(childId) {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/children/${childId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) throw new Error('Failed to delete child');
+    
+    await loadChildren();
+  } catch (error) {
+    console.error("[Children] Delete failed:", error);
+    alert('Failed to delete child account');
+  }
+}
+
+function showAddChildModal() {
+  const modal = document.getElementById('add-child-modal');
+  const nameInput = document.getElementById('new-child-name');
+  
+  if (modal) {
+    modal.classList.remove('hidden');
+    if (nameInput) {
+      nameInput.value = '';
+      nameInput.focus();
+    }
+  }
+}
+
+function hideAddChildModal() {
+  const modal = document.getElementById('add-child-modal');
+  if (modal) modal.classList.add('hidden');
+}
+
+async function createChild() {
+  const nameInput = document.getElementById('new-child-name');
+  const statusEl = document.getElementById('child-status');
+  
+  const name = nameInput.value.trim();
+  
+  if (!name) {
+    showStatus(statusEl, 'Child name is required', 'error');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${backendUrl}/accounts/children`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({ username: name })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to create child');
+    }
+    
+    const newChild = await response.json();
+    
+    alert(`Child account created!\n\nName: ${newChild.username}\nAccess Code: ${newChild.access_code}\n\nSave this code!`);
+    
+    hideAddChildModal();
+    await loadChildren();
+    showStatus(statusEl, 'Child account created successfully', 'success');
+  } catch (error) {
+    console.error("[Children] Create failed:", error);
+    showStatus(statusEl, error.message || 'Failed to create child account', 'error');
+  }
+}
+
+// ========== GROUPS MANAGEMENT ==========
+
+async function loadGroups() {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/groups`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) throw new Error('Failed to load groups');
+    
+    groups = await response.json();
+    displayGroups();
+  } catch (error) {
+    console.error("[Groups] Load failed:", error);
+  }
+}
+
+function displayGroups() {
+  const listEl = document.getElementById('groups-list');
+  const emptyEl = document.getElementById('groups-empty');
+  
+  if (!listEl) return;
+  
+  if (groups.length === 0) {
+    listEl.innerHTML = '';
+    if (emptyEl) emptyEl.classList.remove('hidden');
+    return;
+  }
+  
+  if (emptyEl) emptyEl.classList.add('hidden');
+  
+  listEl.innerHTML = groups.map(group => `
+    <div class="card">
+      <div class="card-header">
+        <div>
+          <h3 class="card-title">${escapeHtml(group.name)}</h3>
+          ${group.description ? `<p style="margin-top:4px; font-size:13px; color:var(--gc-text-dim);">${escapeHtml(group.description)}</p>` : ''}
+          <div style="margin-top:8px;">
+            <button class="btn btn-sm btn-secondary" data-manage-members="${group.id}">Manage Members</button>
+          </div>
+        </div>
+        <div class="card-actions">
+          <button class="btn btn-sm btn-danger" data-delete-group="${group.id}" data-group-name="${escapeHtml(group.name)}">
+            Delete
+          </button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+  
+  // Attach delete handlers
+  listEl.querySelectorAll('[data-delete-group]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const groupId = e.target.dataset.deleteGroup;
+      const groupName = e.target.dataset.groupName;
+      if (confirm(`Delete group "${groupName}"? Rules for this group will be deleted.`)) {
+        deleteGroup(groupId);
+      }
+    });
+  });
+  
+  // Attach manage members handlers
+  listEl.querySelectorAll('[data-manage-members]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const groupId = e.target.dataset.manageMembers;
+      showGroupMembersModal(groupId);
+    });
+  });
+}
+
+async function deleteGroup(groupId) {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/groups/${groupId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) throw new Error('Failed to delete group');
+    
+    await loadGroups();
+  } catch (error) {
+    console.error("[Groups] Delete failed:", error);
+    alert('Failed to delete group');
+  }
+}
+
+async function showAddGroupModal() {
+  const groupName = prompt('Enter group name:');
+  if (!groupName) return;
+  
+  const groupDescription = prompt('Enter group description (optional):') || '';
+  
+  try {
+    const response = await fetch(`${backendUrl}/accounts/groups`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({
+        name: groupName,
+        description: groupDescription
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to create group');
+    }
+    
+    await loadGroups();
+    alert('Group created successfully!');
+  } catch (error) {
+    console.error("[Groups] Create failed:", error);
+    alert(error.message || 'Failed to create group');
+  }
+}
+
+async function showGroupMembersModal(groupId) {
+  // Get group details
+  const group = groups.find(g => g.id == groupId);
+  if (!group) return;
+  
+  // Fetch current group members from backend
+  let currentMembers = [];
+  try {
+    const response = await fetch(`${backendUrl}/accounts/groups/${groupId}/members`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    if (response.ok) {
+      currentMembers = await response.json();
+    }
+  } catch (error) {
+    console.error("[Groups] Failed to load members:", error);
+  }
+  
+  const memberIds = new Set(currentMembers.map(m => m.id));
+  
+  // Create modal
+  const modal = document.createElement('div');
+  modal.id = 'group-members-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  
+  modal.innerHTML = `
+    <div style="background:var(--gc-panel);border:1px solid var(--gc-border);border-radius:14px;padding:24px;max-width:500px;width:90%;">
+      <h3 style="margin:0 0 16px;font-size:18px;">Manage Members: ${escapeHtml(group.name)}</h3>
+      
+      ${currentMembers.length > 0 ? `
+        <div style="margin-bottom:16px;">
+          <h4 style="margin:0 0 8px;font-size:14px;color:var(--gc-text-dim);">Current Members</h4>
+          <div id="current-members" style="max-height:150px;overflow-y:auto;margin-bottom:16px;">
+            ${currentMembers.map(member => `
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border-bottom:1px solid var(--gc-border);">
+                <span>✓ ${escapeHtml(member.username)}</span>
+                <button class="btn btn-sm" style="background:var(--gc-danger);color:white;" data-remove-member="${groupId}" data-child-id="${member.id}">
+                  Remove
+                </button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      ` : ''}
+      
+      <h4 style="margin:0 0 8px;font-size:14px;color:var(--gc-text-dim);">Available Children</h4>
+      <div id="members-selection" style="max-height:200px;overflow-y:auto;margin-bottom:16px;">
+        ${children.filter(child => !memberIds.has(child.id)).map(child => `
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border-bottom:1px solid var(--gc-border);">
+            <span>${escapeHtml(child.username)}</span>
+            <button class="btn btn-sm" data-add-member="${groupId}" data-child-id="${child.id}">
+              Add
+            </button>
+          </div>
+        `).join('') || '<p style="color:var(--gc-text-dim);font-size:12px;text-align:center;padding:16px;">All children are already members</p>'}
+      </div>
+      <button class="btn btn-secondary" id="close-members-modal">Close</button>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Attach close handler
+  document.getElementById('close-members-modal').addEventListener('click', () => {
+    modal.remove();
+  });
+  
+  // Attach add handlers
+  modal.querySelectorAll('[data-add-member]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const groupId = e.target.dataset.addMember;
+      const childId = e.target.dataset.childId;
+      const button = e.target;
+      
+      try {
+        button.disabled = true;
+        button.textContent = 'Adding...';
+        
+        const response = await fetch(`${backendUrl}/accounts/groups/${groupId}/members`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentUser.token}`
+          },
+          body: JSON.stringify({ child_id: parseInt(childId) })
+        });
+        
+        if (!response.ok) throw new Error('Failed to add member');
+        
+        button.textContent = '✓ Added';
+        
+        // Reload modal to show updated members
+        setTimeout(async () => {
+          modal.remove();
+          await loadGroups(); // Refresh group count
+          showGroupMembersModal(groupId);
+        }, 500);
+      } catch (error) {
+        console.error("[Groups] Add member failed:", error);
+        button.disabled = false;
+        button.textContent = 'Add';
+        alert('Failed to add member to group');
+      }
+    });
+  });
+  
+  // Attach remove handlers
+  modal.querySelectorAll('[data-remove-member]').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      const groupId = e.target.dataset.removeMember;
+      const childId = e.target.dataset.childId;
+      const button = e.target;
+      
+      if (!confirm('Remove this child from the group?')) return;
+      
+      try {
+        button.disabled = true;
+        button.textContent = 'Removing...';
+        
+        const response = await fetch(`${backendUrl}/accounts/groups/${groupId}/members/${childId}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${currentUser.token}` }
+        });
+        
+        if (!response.ok) throw new Error('Failed to remove member');
+        
+        // Reload modal to show updated members
+        modal.remove();
+        await loadGroups(); // Refresh group count
+        showGroupMembersModal(groupId);
+      } catch (error) {
+        console.error("[Groups] Remove member failed:", error);
+        button.disabled = false;
+        button.textContent = 'Remove';
+        alert('Failed to remove member from group');
+      }
+    });
+  });
+}
+
+// ========== RULES MANAGEMENT ==========
+
+async function loadRulesTargets() {
+  const targetsEl = document.getElementById('rules-targets');
+  if (!targetsEl) return;
+  
+  const targets = [
+    ...children.map(c => ({ type: 'child', id: c.id, name: c.username })),
+    ...groups.map(g => ({ type: 'group', id: g.id, name: g.name }))
+  ];
+  
+  if (targets.length === 0) {
+    targetsEl.innerHTML = '<p style="color:var(--gc-text-dim);">Create a child account or group first.</p>';
+    return;
+  }
+  
+  targetsEl.innerHTML = `
+    <div class="grid grid-2">
+      ${targets.map(target => `
+        <div class="card" style="cursor:pointer;" data-load-rules="${target.type}" data-target-id="${target.id}" data-target-name="${escapeHtml(target.name)}">
+          <h3 class="card-title">${escapeHtml(target.name)}</h3>
+          <span class="badge badge-${target.type}">${target.type}</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  
+  // Attach handlers
+  targetsEl.querySelectorAll('[data-load-rules]').forEach(card => {
+    card.addEventListener('click', (e) => {
+      const type = e.currentTarget.dataset.loadRules;
+      const id = e.currentTarget.dataset.targetId;
+      const name = e.currentTarget.dataset.targetName;
+      loadRulesForTarget(type, id, name);
+    });
+  });
+}
+
+async function loadRulesForTarget(targetType, targetId, targetName) {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/rules/${targetType}/${targetId}`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) throw new Error('Failed to load rules');
+    
+    const rules = await response.json();
+    displayRules(rules, targetType, targetId, targetName);
+  } catch (error) {
+    console.error("[Rules] Load failed:", error);
+    alert('Failed to load rules');
+  }
+}
+
+function displayRules(rules, targetType, targetId, targetName) {
+  const rulesListEl = document.getElementById('rules-list');
+  if (!rulesListEl) return;
+  
+  rulesListEl.classList.remove('hidden');
+  
+  rulesListEl.innerHTML = `
+    <div class="section-header">
+      <h2 class="section-title">Rules for ${escapeHtml(targetName)}</h2>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-sm" data-add-rule="${targetType}" data-target-id="${targetId}" data-target-name="${escapeHtml(targetName)}">+ Add Rule</button>
+        <button class="btn btn-sm btn-secondary" data-export-rules="${targetType}" data-target-id="${targetId}" data-target-name="${escapeHtml(targetName)}">Export Rules</button>
+        <button class="btn btn-sm btn-secondary" data-import-rules="${targetType}" data-target-id="${targetId}" data-target-name="${escapeHtml(targetName)}">Import Rules</button>
+        <button class="btn btn-sm btn-secondary" data-back-rules>← Back</button>
+      </div>
+    </div>
+    
+    ${rules.length === 0 ? `
+      <div class="empty-state">
+        <div class="empty-icon">📋</div>
+        <p>No rules defined yet</p>
+        <button class="btn" data-add-rule="${targetType}" data-target-id="${targetId}" data-target-name="${escapeHtml(targetName)}">Create First Rule</button>
+      </div>
+    ` : `
+      ${rules.map(rule => `
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h3 class="card-title">${rule.rule_type}</h3>
+              <p style="margin-top:4px; font-size:14px;">${escapeHtml(rule.pattern)}</p>
+              ${rule.explanation ? `<p style="margin-top:4px; font-size:12px; color:var(--gc-text-dim);">${escapeHtml(rule.explanation)}</p>` : ''}
+              <div style="margin-top:8px;">
+                <span class="badge badge-${rule.rule_type}">${rule.rule_type}</span>
+                <span class="badge ${rule.enabled ? 'badge-active' : ''}">${rule.enabled ? 'Enabled' : 'Disabled'}</span>
+              </div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-sm btn-secondary" data-toggle-rule="${rule.id}" data-enabled="${!rule.enabled}" data-type="${targetType}" data-id="${targetId}" data-name="${escapeHtml(targetName)}">
+                ${rule.enabled ? 'Disable' : 'Enable'}
+              </button>
+              <button class="btn btn-sm btn-danger" data-delete-rule="${rule.id}" data-type="${targetType}" data-id="${targetId}" data-name="${escapeHtml(targetName)}">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      `).join('')}
+    `}
+  `;
+  
+  // Attach event listeners
+  rulesListEl.querySelectorAll('[data-add-rule]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const type = e.target.dataset.addRule;
+      const id = e.target.dataset.targetId;
+      const name = e.target.dataset.targetName;
+      showAddRuleModal(type, id, name);
+    });
+  });
+  
+  rulesListEl.querySelectorAll('[data-export-rules]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const type = e.target.dataset.exportRules;
+      const id = e.target.dataset.targetId;
+      const name = e.target.dataset.targetName;
+      exportRules(type, id, name);
+    });
+  });
+  
+  rulesListEl.querySelectorAll('[data-import-rules]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const type = e.target.dataset.importRules;
+      const id = e.target.dataset.targetId;
+      const name = e.target.dataset.targetName;
+      importRules(type, id, name);
+    });
+  });
+  
+  rulesListEl.querySelectorAll('[data-back-rules]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      loadRulesTargets();
+      rulesListEl.classList.add('hidden');
+    });
+  });
+  
+  rulesListEl.querySelectorAll('[data-toggle-rule]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const ruleId = e.target.dataset.toggleRule;
+      const enabled = e.target.dataset.enabled === 'true';
+      const type = e.target.dataset.type;
+      const id = e.target.dataset.id;
+      const name = e.target.dataset.name;
+      toggleRule(ruleId, enabled, type, id, name);
+    });
+  });
+  
+  rulesListEl.querySelectorAll('[data-delete-rule]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      const ruleId = e.target.dataset.deleteRule;
+      const type = e.target.dataset.type;
+      const id = e.target.dataset.id;
+      const name = e.target.dataset.name;
+      if (confirm('Delete this rule?')) {
+        deleteRule(ruleId, type, id, name);
+      }
+    });
+  });
+}
+
+function showAddRuleModal(targetType, targetId, targetName) {
+  // Create modal
+  const modal = document.createElement('div');
+  modal.id = 'add-rule-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(4px);';
+  
+  modal.innerHTML = `
+    <div style="background:linear-gradient(145deg,#1b2736,#14202c);border:1px solid #233244;border-radius:16px;padding:32px;max-width:650px;width:92%;box-shadow:0 25px 70px rgba(0,0,0,0.6);">
+      <h3 style="margin:0 0 24px;font-size:22px;font-weight:650;background:linear-gradient(90deg,#ffffff,#c7d2fe);-webkit-background-clip:text;background-clip:text;color:transparent;">Add Rule for ${escapeHtml(targetName)}</h3>
+      
+      <div style="margin-bottom:24px;">
+        <label style="display:block;margin-bottom:10px;font-weight:600;font-size:13px;letter-spacing:0.05em;text-transform:uppercase;color:var(--gc-text-dim);">Rule Type</label>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;" id="rule-type-buttons">
+          <button class="btn btn-sm" data-rule-type="blocklist" style="flex:1;min-width:120px;padding:12px 16px;font-size:13px;border-radius:12px;">
+            🚫 Blocklist
+          </button>
+          <button class="btn btn-sm btn-secondary" data-rule-type="allowlist" style="flex:1;min-width:120px;padding:12px 16px;font-size:13px;border-radius:12px;">
+            ✅ Allowlist
+          </button>
+          <button class="btn btn-sm btn-secondary" data-rule-type="time_window" style="flex:1;min-width:120px;padding:12px 16px;font-size:13px;border-radius:12px;">
+            ⏰ Time Window
+          </button>
+        </div>
+        <p id="rule-type-description" style="margin-top:12px;font-size:13px;line-height:1.6;color:var(--gc-text-dim);min-height:40px;">
+          Select a rule type to continue
+        </p>
+      </div>
+      
+      <div style="margin-bottom:20px;" id="pattern-section">
+        <label style="display:block;margin-bottom:10px;font-weight:600;font-size:13px;letter-spacing:0.05em;text-transform:uppercase;color:var(--gc-text-dim);">Website/Pattern <span style="color:var(--gc-danger);">*</span></label>
+        <input type="text" id="rule-pattern" placeholder="e.g., facebook.com or youtube.com" style="width:100%;padding:12px 14px;border:2px solid var(--gc-border);border-radius:12px;background:rgba(15,23,42,0.8);color:var(--gc-text);font-size:14px;transition:all 0.2s;">
+        <p style="margin-top:6px;font-size:12px;color:var(--gc-text-dim);line-height:1.5;" id="pattern-help">
+          Enter the domain name (e.g., facebook.com, youtube.com)
+        </p>
+      </div>
+      
+      <div style="margin-bottom:20px;display:none;" id="time-window-section">
+        <label style="display:block;margin-bottom:10px;font-weight:600;font-size:13px;letter-spacing:0.05em;text-transform:uppercase;color:var(--gc-text-dim);">Days of Week</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px;" id="day-buttons">
+          <button data-day="Mon" style="flex:1;min-width:60px;padding:10px 12px;font-size:12px;font-weight:600;border:2px solid var(--gc-border);border-radius:10px;background:rgba(255,255,255,0.05);color:var(--gc-text-dim);cursor:pointer;transition:all 0.2s;">Mon</button>
+          <button data-day="Tue" style="flex:1;min-width:60px;padding:10px 12px;font-size:12px;font-weight:600;border:2px solid var(--gc-border);border-radius:10px;background:rgba(255,255,255,0.05);color:var(--gc-text-dim);cursor:pointer;transition:all 0.2s;">Tue</button>
+          <button data-day="Wed" style="flex:1;min-width:60px;padding:10px 12px;font-size:12px;font-weight:600;border:2px solid var(--gc-border);border-radius:10px;background:rgba(255,255,255,0.05);color:var(--gc-text-dim);cursor:pointer;transition:all 0.2s;">Wed</button>
+          <button data-day="Thu" style="flex:1;min-width:60px;padding:10px 12px;font-size:12px;font-weight:600;border:2px solid var(--gc-border);border-radius:10px;background:rgba(255,255,255,0.05);color:var(--gc-text-dim);cursor:pointer;transition:all 0.2s;">Thu</button>
+          <button data-day="Fri" style="flex:1;min-width:60px;padding:10px 12px;font-size:12px;font-weight:600;border:2px solid var(--gc-border);border-radius:10px;background:rgba(255,255,255,0.05);color:var(--gc-text-dim);cursor:pointer;transition:all 0.2s;">Fri</button>
+          <button data-day="Sat" style="flex:1;min-width:60px;padding:10px 12px;font-size:12px;font-weight:600;border:2px solid var(--gc-border);border-radius:10px;background:rgba(255,255,255,0.05);color:var(--gc-text-dim);cursor:pointer;transition:all 0.2s;">Sat</button>
+          <button data-day="Sun" style="flex:1;min-width:60px;padding:10px 12px;font-size:12px;font-weight:600;border:2px solid var(--gc-border);border-radius:10px;background:rgba(255,255,255,0.05);color:var(--gc-text-dim);cursor:pointer;transition:all 0.2s;">Sun</button>
+        </div>
+        
+        <label style="display:block;margin-bottom:10px;font-weight:600;font-size:13px;letter-spacing:0.05em;text-transform:uppercase;color:var(--gc-text-dim);">Time Range</label>
+        <div style="display:flex;gap:12px;align-items:center;">
+          <select id="time-start" style="flex:1;padding:12px 14px;border:2px solid var(--gc-border);border-radius:12px;background:rgba(15,23,42,0.8);color:var(--gc-text);font-size:14px;cursor:pointer;">
+            ${generateTimeOptions()}
+          </select>
+          <span style="color:var(--gc-text-dim);font-weight:600;">to</span>
+          <select id="time-end" style="flex:1;padding:12px 14px;border:2px solid var(--gc-border);border-radius:12px;background:rgba(15,23,42,0.8);color:var(--gc-text);font-size:14px;cursor:pointer;">
+            ${generateTimeOptions()}
+          </select>
+        </div>
+        <p style="margin-top:6px;font-size:12px;color:var(--gc-text-dim);">Select start and end times for the restriction</p>
+      </div>
+      
+      <div style="margin-bottom:24px;">
+        <label style="display:block;margin-bottom:10px;font-weight:600;font-size:13px;letter-spacing:0.05em;text-transform:uppercase;color:var(--gc-text-dim);">Explanation <span style="color:var(--gc-danger);">*</span></label>
+        <textarea id="rule-explanation" placeholder="Why is this rule needed? This message will be shown when the rule is triggered." style="width:100%;padding:12px 14px;border:2px solid var(--gc-border);border-radius:12px;background:rgba(15,23,42,0.8);color:var(--gc-text);font-size:14px;min-height:90px;resize:vertical;line-height:1.5;"></textarea>
+      </div>
+      
+      <div id="rule-modal-status" style="margin-bottom:16px;padding:12px 16px;border-radius:12px;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);color:#fca5a5;font-size:13px;display:none;font-weight:500;"></div>
+      
+      <div style="display:flex;gap:12px;justify-content:flex-end;">
+        <button class="btn btn-secondary" id="cancel-rule-btn" style="padding:12px 24px;border-radius:12px;">Cancel</button>
+        <button class="btn" id="create-rule-btn" style="padding:12px 24px;border-radius:12px;">Create Rule</button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(modal);
+  
+  // Attach event listeners
+  document.querySelectorAll('#rule-type-buttons [data-rule-type]').forEach(btn => {
+    btn.addEventListener('click', () => selectRuleType(btn.dataset.ruleType));
+  });
+  
+  // Day button toggles
+  document.querySelectorAll('#day-buttons [data-day]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      btn.classList.toggle('active');
+      if (btn.classList.contains('active')) {
+        btn.style.background = 'linear-gradient(135deg,#6366f1,#8b5cf6)';
+        btn.style.borderColor = '#6366f1';
+        btn.style.color = '#fff';
+      } else {
+        btn.style.background = 'rgba(255,255,255,0.05)';
+        btn.style.borderColor = 'var(--gc-border)';
+        btn.style.color = 'var(--gc-text-dim)';
+      }
+    });
+  });
+  
+  document.getElementById('cancel-rule-btn').addEventListener('click', () => {
+    modal.remove();
+  });
+  
+  document.getElementById('create-rule-btn').addEventListener('click', () => {
+    submitRule(targetType, targetId, targetName);
+  });
+  
+  // Initialize with blocklist selected
+  selectRuleType('blocklist');
+  
+  // Focus pattern input
+  setTimeout(() => {
+    document.getElementById('rule-pattern').focus();
+  }, 100);
+}
+
+// Helper function to generate time options (00:00 to 23:45 in 15-min intervals)
+function generateTimeOptions() {
+  const options = [];
+  for (let hour = 0; hour < 24; hour++) {
+    for (let min = 0; min < 60; min += 15) {
+      const timeStr = `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
+      options.push(`<option value="${timeStr}">${timeStr}</option>`);
+    }
+  }
+  return options.join('');
+}
+
+// Rule modal state and functions (now local, not global)
+let selectedRuleType = 'blocklist';
+
+function selectRuleType(type) {
+  selectedRuleType = type;
+  
+  // Update button styles
+  document.querySelectorAll('[data-rule-type]').forEach(btn => {
+    if (btn.dataset.ruleType === type) {
+      btn.classList.remove('btn-secondary');
+      btn.classList.add('btn');
+    } else {
+      btn.classList.remove('btn');
+      btn.classList.add('btn-secondary');
+    }
+  });
+  
+  // Update description
+  const descriptions = {
+    blocklist: '🚫 <strong>Blocklist:</strong> Block access to specific websites. The child will see a blocked page when trying to visit these sites.',
+    allowlist: '✅ <strong>Allowlist:</strong> Only allow access to specific websites. All other sites will be blocked.',
+    time_window: '⏰ <strong>Time Window:</strong> Restrict access during specific times and days (e.g., bedtime, school hours).'
+  };
+  
+  document.getElementById('rule-type-description').innerHTML = descriptions[type];
+  
+  // Show/hide appropriate sections
+  const patternSection = document.getElementById('pattern-section');
+  const timeWindowSection = document.getElementById('time-window-section');
+  const patternInput = document.getElementById('rule-pattern');
+  const patternHelp = document.getElementById('pattern-help');
+  
+  if (type === 'time_window') {
+    // Show time window UI
+    patternSection.style.display = 'block';
+    timeWindowSection.style.display = 'block';
+    patternInput.placeholder = 'e.g., facebook.com (optional - leave empty for all sites)';
+    patternHelp.textContent = 'Optional: Enter a specific website to restrict, or leave empty to apply time restriction to all sites';
+  } else {
+    // Show simple pattern input
+    patternSection.style.display = 'block';
+    timeWindowSection.style.display = 'none';
+    patternInput.placeholder = 'e.g., facebook.com or youtube.com';
+    patternHelp.textContent = 'Enter the domain name (e.g., facebook.com, youtube.com)';
+  }
+}
+
+async function submitRule(targetType, targetId, targetName) {
+  const pattern = document.getElementById('rule-pattern').value.trim();
+  const explanation = document.getElementById('rule-explanation').value.trim();
+  const statusEl = document.getElementById('rule-modal-status');
+  const createBtn = document.getElementById('create-rule-btn');
+  
+  let finalPattern = pattern;
+  
+  // For time_window type, build pattern from time selectors and days
+  if (selectedRuleType === 'time_window') {
+    const timeStart = document.getElementById('time-start').value;
+    const timeEnd = document.getElementById('time-end').value;
+    const selectedDays = Array.from(document.querySelectorAll('#day-buttons [data-day].active'))
+      .map(btn => btn.dataset.day);
+    
+    if (!timeStart || !timeEnd) {
+      statusEl.textContent = 'Please select start and end times';
+      statusEl.style.display = 'block';
+      return;
+    }
+    
+    // Build pattern: domain|days|time (or just days|time if no domain)
+    const timeRange = `${timeStart}-${timeEnd}`;
+    const daysStr = selectedDays.length > 0 ? selectedDays.join(',') : 'Mon,Tue,Wed,Thu,Fri,Sat,Sun';
+    
+    if (pattern) {
+      finalPattern = `${pattern}|${daysStr}|${timeRange}`;
+    } else {
+      finalPattern = `*|${daysStr}|${timeRange}`;
+    }
+  }
+  
+  // Validation
+  if (!finalPattern || (selectedRuleType !== 'time_window' && !pattern)) {
+    statusEl.textContent = 'Pattern is required';
+    statusEl.style.display = 'block';
+    return;
+  }
+  
+  if (!explanation) {
+    statusEl.textContent = 'Explanation is required - please explain why this rule is needed';
+    statusEl.style.display = 'block';
+    return;
+  }
+  
+  // Disable button
+  createBtn.disabled = true;
+  createBtn.textContent = 'Creating...';
+  statusEl.style.display = 'none';
+  
+  try {
+    await createRule(targetType, targetId, targetName, {
+      rule_type: selectedRuleType,
+      pattern: finalPattern,
+      explanation: explanation,
+      enabled: true
+    });
+    
+    // Close modal on success
+    document.getElementById('add-rule-modal').remove();
+  } catch (error) {
+    statusEl.textContent = error.message || 'Failed to create rule';
+    statusEl.style.display = 'block';
+    createBtn.disabled = false;
+    createBtn.textContent = 'Create Rule';
+  }
+}
+
+async function createRule(targetType, targetId, targetName, ruleData) {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/rules`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({
+        ...ruleData,
+        target_type: targetType,
+        target_id: parseInt(targetId)
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to create rule');
+    }
+    
+    await loadRulesForTarget(targetType, targetId, targetName);
+  } catch (error) {
+    console.error("[Rules] Create failed:", error);
+    alert(error.message || 'Failed to create rule');
+  }
+}
+
+async function toggleRule(ruleId, enabled, targetType, targetId, targetName) {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/rules/${ruleId}?enabled=${enabled}`, {
+      method: 'PATCH',
+      headers: {
+        'Authorization': `Bearer ${currentUser.token}`
+      }
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[Rules] Toggle failed:", response.status, errorText);
+      throw new Error('Failed to toggle rule');
+    }
+    
+    await loadRulesForTarget(targetType, targetId, targetName);
+  } catch (error) {
+    console.error("[Rules] Toggle failed:", error);
+    alert('Failed to toggle rule');
+  }
+}
+
+async function deleteRule(ruleId, targetType, targetId, targetName) {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/rules/${ruleId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) throw new Error('Failed to delete rule');
+    
+    await loadRulesForTarget(targetType, targetId, targetName);
+  } catch (error) {
+    console.error("[Rules] Delete failed:", error);
+    alert('Failed to delete rule');
+  }
+}
+
+// ========== IMPORT/EXPORT RULES ==========
+
+async function exportRules(targetType, targetId, targetName) {
+  try {
+    const response = await fetch(`${backendUrl}/accounts/rules/${targetType}/${targetId}`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) throw new Error('Failed to load rules');
+    
+    const rules = await response.json();
+    
+    // Create JSON blob
+    const rulesJSON = JSON.stringify(rules, null, 2);
+    const blob = new Blob([rulesJSON], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    
+    // Download
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `guardiancore-rules-${targetName}-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    
+    alert('Rules exported successfully!');
+  } catch (error) {
+    console.error("[Export] Failed:", error);
+    alert('Failed to export rules');
+  }
+}
+
+async function importRules(targetType, targetId, targetName) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    try {
+      const text = await file.text();
+      const rules = JSON.parse(text);
+      
+      if (!Array.isArray(rules)) {
+        throw new Error('Invalid rules file format');
+      }
+      
+      // Import each rule
+      let imported = 0;
+      for (const rule of rules) {
+        try {
+          await createRule(targetType, targetId, targetName, {
+            rule_type: rule.rule_type,
+            pattern: rule.pattern,
+            explanation: rule.explanation || '',
+            enabled: rule.enabled !== false
+          });
+          imported++;
+        } catch (err) {
+          console.error("[Import] Failed to import rule:", rule, err);
+        }
+      }
+      
+      alert(`Imported ${imported} out of ${rules.length} rules successfully!`);
+      await loadRulesForTarget(targetType, targetId, targetName);
+    } catch (error) {
+      console.error("[Import] Failed:", error);
+      alert('Failed to import rules: ' + error.message);
+    }
+  };
+  
+  input.click();
+}
+
+// ========== BACKEND CONFIGURATION ==========
+
+async function loadBackendSettings() {
+  const urlInput = document.getElementById('backend-url');
+  if (urlInput) urlInput.value = backendUrl;
+}
+
+async function saveBackendSettings() {
+  const urlInput = document.getElementById('backend-url');
+  const statusEl = document.getElementById('backend-status');
+  
+  const newUrl = urlInput.value.trim();
+  
+  if (!newUrl) {
+    showStatus(statusEl, 'Backend URL cannot be empty', 'error');
+    return;
+  }
+  
+  try {
+    const response = await fetch(`${newUrl}/health`);
+    if (!response.ok) throw new Error('Backend not reachable');
+    
+    await chrome.storage.local.set({ gc_backend_url: newUrl });
+    backendUrl = newUrl;
+    
+    showStatus(statusEl, 'Backend URL saved successfully', 'success');
+  } catch (error) {
+    console.error("[Backend] Save failed:", error);
+    showStatus(statusEl, 'Failed to connect to backend', 'error');
+  }
+}
+
+// ========== UTILITY FUNCTIONS ==========
+
+function escapeHtml(text) {
+  if (!text) return '';
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+function showStatus(element, message, type) {
+  if (!element) return;
+  element.textContent = message;
+  element.className = `status status-${type}`;
+  element.classList.remove('hidden');
+  
+  if (type === 'success') {
+    setTimeout(() => element.classList.add('hidden'), 5000);
+  }
+}
+
+// ========== TAB MANAGEMENT ==========
+
+function setupTabs() {
+  const tabs = document.querySelectorAll('.tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const targetTab = tab.dataset.tab;
+      
+      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      const content = document.getElementById(`${targetTab}-tab`);
+      if (content) content.classList.add('active');
+      
+      loadTabData(targetTab);
+    });
+  });
+}
+
+function loadTabData(tabName) {
+  switch(tabName) {
+    case 'profile':
+      loadProfile();
+      break;
+    case 'children':
+      loadChildren();
+      break;
+    case 'groups':
+      loadGroups();
+      break;
+    case 'rules':
+      loadRulesTargets();
+      break;
+    case 'recovery':
+      displayRecoveryCodes();
+      break;
+    case 'backend':
+      loadBackendSettings();
+      break;
+  }
+}
+
+// ========== INITIALIZATION ==========
+
+document.addEventListener('DOMContentLoaded', async () => {
+  console.log("[Options] DOM loaded");
+  
+  const isAuthenticated = await checkAuth();
+  if (!isAuthenticated) return;
+  
+  // Verify PIN before showing options
+  const isPINValid = await verifyPINOnLoad();
+  if (!isPINValid) return;
+  
+  setupTabs();
+  
+  const logoutBtn = document.getElementById('logout-btn');
+  if (logoutBtn) logoutBtn.addEventListener('click', handleLogout);
+  
+  const saveProfileBtn = document.getElementById('save-profile-btn');
+  if (saveProfileBtn) saveProfileBtn.addEventListener('click', saveProfile);
+  
+  const changePasswordBtn = document.getElementById('change-password-btn');
+  if (changePasswordBtn) changePasswordBtn.addEventListener('click', changePassword);
+  
+  const addChildBtn = document.getElementById('add-child-btn');
+  if (addChildBtn) addChildBtn.addEventListener('click', showAddChildModal);
+  
+  const createChildBtn = document.getElementById('create-child-btn');
+  if (createChildBtn) createChildBtn.addEventListener('click', createChild);
+  
+  const cancelChildBtn = document.getElementById('cancel-child-btn');
+  if (cancelChildBtn) cancelChildBtn.addEventListener('click', hideAddChildModal);
+  
+  const addGroupBtn = document.getElementById('add-group-btn');
+  if (addGroupBtn) addGroupBtn.addEventListener('click', showAddGroupModal);
+  
+  const saveBackendBtn = document.getElementById('save-backend-btn');
+  if (saveBackendBtn) saveBackendBtn.addEventListener('click', saveBackendSettings);
+  
+  const changePINBtn = document.getElementById('change-pin-btn');
+  if (changePINBtn) changePINBtn.addEventListener('click', changePIN);
+  
+  loadProfile();
+  loadChildren();
+  loadGroups();
+  loadBackendSettings();
+  
+  console.log("[Options] Initialization complete");
+});
+
+// Additional event listeners for empty state buttons
+document.addEventListener('DOMContentLoaded', () => {
+  // These need to be attached dynamically when the empty state is shown
+  const observer = new MutationObserver(() => {
+    const addFirstChildBtn = document.getElementById('add-first-child-btn');
+    if (addFirstChildBtn && !addFirstChildBtn.dataset.hasListener) {
+      addFirstChildBtn.dataset.hasListener = 'true';
+      addFirstChildBtn.addEventListener('click', showAddChildModal);
+    }
+    
+    const addFirstGroupBtn = document.getElementById('add-first-group-btn');
+    if (addFirstGroupBtn && !addFirstGroupBtn.dataset.hasListener) {
+      addFirstGroupBtn.dataset.hasListener = 'true';
+      addFirstGroupBtn.addEventListener('click', showAddGroupModal);
+    }
+  });
+  
+  observer.observe(document.body, { childList: true, subtree: true });
+});

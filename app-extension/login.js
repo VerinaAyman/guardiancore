@@ -1,0 +1,288 @@
+// GuardianCore Login - Parent and Child Authentication
+console.log("[Login] Script starting...");
+
+// Switch between login types
+document.querySelectorAll('.type-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const type = btn.dataset.type;
+    
+    // Update active button
+    document.querySelectorAll('.type-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    
+    // Show corresponding form
+    document.querySelectorAll('.login-form').forEach(form => form.classList.remove('active'));
+    if (type === 'parent') {
+      document.getElementById('parent-form').classList.add('active');
+    } else {
+      document.getElementById('child-form').classList.add('active');
+    }
+    
+    // Clear all statuses
+    document.querySelectorAll('.status').forEach(s => {
+      s.classList.remove('visible', 'status-success', 'status-error');
+      s.textContent = '';
+    });
+  });
+});
+
+// Toggle between login and register
+document.getElementById('show-register')?.addEventListener('click', () => {
+  document.getElementById('parent-form').classList.remove('active');
+  document.getElementById('register-form').classList.add('active');
+  clearStatus('parent-status');
+});
+
+document.getElementById('show-login')?.addEventListener('click', () => {
+  document.getElementById('register-form').classList.remove('active');
+  document.getElementById('parent-form').classList.add('active');
+  clearStatus('register-status');
+});
+
+// Parent Login
+document.getElementById('parent-login-btn')?.addEventListener('click', async () => {
+  const email = document.getElementById('parent-email').value.trim();
+  const password = document.getElementById('parent-password').value;
+  
+  if (!email || !password) {
+    showStatus('parent-status', 'Please enter email and password', 'error');
+    return;
+  }
+  
+  const btn = document.getElementById('parent-login-btn');
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
+  
+  try {
+    const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
+    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    
+    const response = await fetch(`${backendUrl}/auth/parent/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Login failed');
+    }
+    
+    const data = await response.json();
+    
+        // Store authentication
+    await chrome.storage.local.set({
+      gc_auth_token: data.token,
+      gc_user_id: data.user_id,
+      gc_account_type: data.account_type,
+      gc_username: data.username,
+      gc_email: data.email || email
+    });
+    
+    // Notify background service worker to reload authentication
+    try {
+      await chrome.runtime.sendMessage({ type: "AUTH_UPDATED" });
+    } catch (e) {
+      console.warn('[Login] Failed to notify background:', e);
+    }
+    
+    showStatus('login-status', '✅ Login successful! Redirecting...', 'success');
+    
+    // Redirect to options page
+    setTimeout(() => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('options.html') });
+      window.close();
+    }, 1000);
+    
+  } catch (error) {
+    console.error('[Login] Parent login error:', error);
+    showStatus('parent-status', `Login failed: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+});
+
+// Parent Register
+document.getElementById('register-btn')?.addEventListener('click', async () => {
+  const username = document.getElementById('register-username').value.trim();
+  const email = document.getElementById('register-email').value.trim();
+  const password = document.getElementById('register-password').value;
+  
+  if (!username || !email || !password) {
+    showStatus('register-status', 'Please fill all fields', 'error');
+    return;
+  }
+  
+  if (password.length < 8) {
+    showStatus('register-status', 'Password must be at least 8 characters', 'error');
+    return;
+  }
+  
+  const btn = document.getElementById('register-btn');
+  btn.disabled = true;
+  btn.textContent = 'Creating account...';
+  
+  try {
+    const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
+    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    
+    const response = await fetch(`${backendUrl}/auth/parent/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Registration failed');
+    }
+    
+    const data = await response.json();
+    
+    // Store authentication data
+    await chrome.storage.local.set({
+      gc_auth_token: data.token,
+      gc_user_id: data.user_id,
+      gc_account_type: data.account_type,
+      gc_username: data.username,
+      gc_email: data.email
+    });
+    
+    showStatus('register-status', '✅ Account created! Redirecting...', 'success');
+    
+    // Redirect to options page
+    setTimeout(() => {
+      chrome.runtime.openOptionsPage();
+      window.close();
+    }, 1000);
+    
+  } catch (error) {
+    console.error('[Login] Register error:', error);
+    showStatus('register-status', `Registration failed: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create Account';
+  }
+});
+
+// Child Login
+document.getElementById('child-login-btn')?.addEventListener('click', async () => {
+  const code = document.getElementById('child-code').value.trim();
+  
+  if (!code || code.length !== 6 || !/^\d{6}$/.test(code)) {
+    showStatus('child-status', 'Please enter a valid 6-digit code', 'error');
+    return;
+  }
+  
+  const btn = document.getElementById('child-login-btn');
+  btn.disabled = true;
+  btn.textContent = 'Signing in...';
+  
+  try {
+    const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
+    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    
+    const response = await fetch(`${backendUrl}/auth/child/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ access_code: code })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Login failed');
+    }
+    
+    const data = await response.json();
+    
+    // Store authentication data
+    await chrome.storage.local.set({
+      gc_auth_token: data.token,
+      gc_user_id: data.user_id,
+      gc_account_type: data.account_type,
+      gc_username: data.username
+    });
+    
+    // Notify background service worker to reload authentication
+    try {
+      await chrome.runtime.sendMessage({ type: "AUTH_UPDATED" });
+    } catch (e) {
+      console.warn('[Login] Failed to notify background:', e);
+    }
+    
+    showStatus('child-status', '✅ Login successful! Redirecting...', 'success');
+    
+    // Redirect to child options page
+    setTimeout(() => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('child-options.html') });
+      window.close();
+    }, 1000);
+    
+  } catch (error) {
+    console.error('[Login] Child login error:', error);
+    showStatus('child-status', `Login failed: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Sign In';
+  }
+});
+
+// Handle Enter key
+['parent-email', 'parent-password'].forEach(id => {
+  document.getElementById(id)?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') document.getElementById('parent-login-btn')?.click();
+  });
+});
+
+['register-username', 'register-email', 'register-password'].forEach(id => {
+  document.getElementById(id)?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') document.getElementById('register-btn')?.click();
+  });
+});
+
+document.getElementById('child-code')?.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') document.getElementById('child-login-btn')?.click();
+});
+
+// Auto-format child code (add visual spacing)
+document.getElementById('child-code')?.addEventListener('input', (e) => {
+  e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+});
+
+// Helper functions
+function showStatus(elementId, message, type) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.textContent = message;
+  el.className = `status visible status-${type}`;
+}
+
+function clearStatus(elementId) {
+  const el = document.getElementById(elementId);
+  if (!el) return;
+  el.className = 'status';
+  el.textContent = '';
+}
+
+// Check if already logged in
+async function checkAuth() {
+  const { gc_auth_token, gc_account_type } = await chrome.storage.local.get([
+    'gc_auth_token',
+    'gc_account_type'
+  ]);
+  
+  if (gc_auth_token) {
+    console.log('[Login] Already authenticated as', gc_account_type);
+    // Redirect to appropriate page
+    if (gc_account_type === 'parent') {
+      chrome.runtime.openOptionsPage();
+    } else {
+      chrome.tabs.create({ url: chrome.runtime.getURL('child-options.html') });
+    }
+    window.close();
+  }
+}
+
+// Check on load
+checkAuth();

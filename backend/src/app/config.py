@@ -3,12 +3,15 @@ from typing import Set
 import os
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False)
+    model_config = SettingsConfigDict(env_file=".env", case_sensitive=False, extra="ignore")
     
     # App settings
     APP_NAME: str = "GuardianCore"
-    APP_VERSION: str = "0.4.0"
+    APP_VERSION: str = "0.5.0"
     ENV: str = "dev"
+    
+    # JWT Secret Key
+    SECRET_KEY: str = "your-super-secret-jwt-key-change-in-production-2025"
     
     # Database settings
     POSTGRES_HOST: str = "db"

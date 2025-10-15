@@ -69,6 +69,99 @@ rule_bundles = Table(
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
 )
 
+# Users table (parent and child accounts)
+users = Table(
+    "users", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("email", Text, nullable=True, unique=True),  # Only for parent accounts
+    Column("password_hash", Text, nullable=True),  # Only for parent accounts
+    Column("account_type", Text, nullable=False),  # 'parent' or 'child'
+    Column("username", Text, nullable=False),  # Display name
+    Column("access_code", Text, nullable=True),  # 6-digit code for child login
+    Column("parent_id", BigInteger, nullable=True),  # Foreign key to parent user
+    Column("profile_data", JSON, nullable=True),  # Additional profile info
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
+
+Index("idx_users_email", users.c.email)
+Index("idx_users_parent", users.c.parent_id)
+Index("idx_users_code", users.c.access_code)
+
+# Groups table (parent can group children)
+groups = Table(
+    "groups", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("parent_id", BigInteger, nullable=False),  # Owner of the group
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=True),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
+
+Index("idx_groups_parent", groups.c.parent_id)
+
+# Group members table (many-to-many: children to groups)
+group_members = Table(
+    "group_members", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("group_id", BigInteger, nullable=False),
+    Column("child_id", BigInteger, nullable=False),
+    Column("added_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
+
+Index("idx_group_members_group", group_members.c.group_id)
+Index("idx_group_members_child", group_members.c.child_id)
+
+# Child rules table (rules specific to a child or group)
+child_rules = Table(
+    "child_rules", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("rule_type", Text, nullable=False),  # 'allowlist', 'blocklist', 'time_window'
+    Column("pattern", Text, nullable=False),
+    Column("category", Text, nullable=True),
+    Column("explanation", Text, nullable=True),
+    Column("enabled", Boolean, nullable=False, server_default="true"),
+    Column("target_type", Text, nullable=False),  # 'child' or 'group'
+    Column("target_id", BigInteger, nullable=False),  # child_id or group_id
+    Column("created_by", BigInteger, nullable=False),  # parent_id
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
+
+Index("idx_child_rules_target", child_rules.c.target_type, child_rules.c.target_id)
+Index("idx_child_rules_creator", child_rules.c.created_by)
+
+# Per-user gamification state
+user_gamification = Table(
+    "user_gamification", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("user_id", BigInteger, nullable=False, unique=True),
+    Column("day_key", Text, nullable=False),  # 'YYYY-MM-DD'
+    Column("xp", Integer, nullable=False, server_default="0"),
+    Column("level", Integer, nullable=False, server_default="1"),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
+
+Index("idx_gamification_user", user_gamification.c.user_id)
+
+# Per-user audit stats
+user_stats = Table(
+    "user_stats", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("user_id", BigInteger, nullable=False),
+    Column("stat_date", TIMESTAMP(timezone=True), nullable=False),
+    Column("total_audits", Integer, nullable=False, server_default="0"),
+    Column("unique_origins", Integer, nullable=False, server_default="0"),
+    Column("avg_trackers", Integer, nullable=False, server_default="0"),
+    Column("csp_coverage", Integer, nullable=False, server_default="0"),
+    Column("cors_coverage", Integer, nullable=False, server_default="0"),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
+
+Index("idx_user_stats_user", user_stats.c.user_id)
+Index("idx_user_stats_date", user_stats.c.stat_date)
+
 # Throttling table to prevent duplicate submissions
 submit_throttle = Table(
     "submit_throttle", metadata,

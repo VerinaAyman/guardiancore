@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Parental Lock - GuardianCore</title>
+  <link rel="stylesheet" href="xp.css" />
+  <style>
+    :root {
+      --gc-gradient: linear-gradient(120deg, #4f46e5 0%, #6d28d9 55%, #9333ea 100%);
+      --gc-bg: #0f172a;
+      --gc-panel: #1e293b;
+      --gc-border: #334155;
+      --gc-text: #f1f5f9;
+      --gc-text-dim: #94a3b8;
+      --gc-accent: #6366f1;
+      --gc-danger: #ef4444;
+    }
+    
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      background: radial-gradient(circle at 70% 15%, rgba(99, 102, 241, 0.25), transparent 60%) var(--gc-bg);
+      color: var(--gc-text);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .container {
+      width: 100%;
+      max-width: 450px;
+      padding: 20px;
+    }
+    
+    .lock-card {
+      background: linear-gradient(145deg, #1f2a3b, #192433);
+      border: 1px solid var(--gc-border);
+      border-radius: 20px;
+      padding: 48px;
+      text-align: center;
+      box-shadow: 0 25px 70px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .lock-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at 80% 20%, rgba(99, 102, 241, 0.15), transparent 60%);
+      pointer-events: none;
+    }
+    
+    .lock-icon {
+      font-size: 84px;
+      margin-bottom: 24px;
+      filter: drop-shadow(0 8px 24px rgba(99, 102, 241, 0.4));
+      animation: pulse 2.5s ease-in-out infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.08); opacity: 0.95; }
+    }
+    
+    h1 {
+      margin: 0 0 12px;
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+      background: linear-gradient(120deg, #f1f5f9, #cbd5e1);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    
+    .subtitle {
+      margin: 0 0 36px;
+      color: var(--gc-text-dim);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 360px;
+      margin-left: auto;
+      margin-right: auto;
+    }
+    
+    .pin-input {
+      width: 200px;
+      max-width: 100%;
+      margin: 0 auto 24px;
+      padding: 14px 16px;
+      border: 2px solid var(--gc-border);
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.8);
+      color: var(--gc-text);
+      font-size: 28px;
+      text-align: center;
+      letter-spacing: 18px;
+      font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+      font-weight: 600;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+      display: block;
+    }
+    
+    .pin-input:focus {
+      outline: none;
+      border-color: var(--gc-accent);
+      box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2), inset 0 2px 4px rgba(0, 0, 0, 0.3);
+      transform: translateY(-1px);
+    }
+    
+    .pin-input::placeholder {
+      opacity: 0.4;
+      letter-spacing: 8px;
+    }
+    
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-bottom: 12px;
+    }
+    
+    .btn-primary {
+      background: linear-gradient(135deg, #6366f1 0%, #5558e3 100%);
+      color: white;
+      box-shadow: 0 6px 18px rgba(99, 102, 241, 0.45), 0 2px 6px rgba(0, 0, 0, 0.2);
+      position: relative;
+      overflow: hidden;
+    }
+    
+    .btn-primary::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), transparent);
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+    
+    .btn-primary:hover:not(:disabled)::before {
+      opacity: 1;
+    }
+    
+    .btn-primary:hover:not(:disabled) {
+      transform: translateY(-3px);
+      box-shadow: 0 10px 28px rgba(99, 102, 241, 0.6), 0 4px 10px rgba(0, 0, 0, 0.3);
+    }
+    
+    .btn-primary:active:not(:disabled) {
+      transform: translateY(-1px);
+    }
+    
+    .btn-secondary {
+      background: linear-gradient(135deg, #334155, #1e293b);
+      color: var(--gc-text);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+    }
+    
+    .btn-secondary:hover {
+      background: linear-gradient(135deg, #475569, #334155);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    }
+    
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    .error-msg {
+      background: linear-gradient(135deg, #fee2e2, #fecaca);
+      border: 1px solid var(--gc-danger);
+      color: var(--gc-danger);
+      padding: 14px 18px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      font-size: 14px;
+      font-weight: 500;
+      display: none;
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
+    }
+    
+    .error-msg.show {
+      display: block;
+      animation: shake 0.5s, slideDown 0.4s;
+    }
+    
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .recovery-section {
+      margin-top: 36px;
+      padding-top: 36px;
+      border-top: 1px solid rgba(255, 255, 255, 0.1);
+    }
+    
+    .recovery-title {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      letter-spacing: -0.3px;
+    }
+    
+    .recovery-text {
+      color: var(--gc-text-dim);
+      font-size: 14px;
+      margin-bottom: 20px;
+      line-height: 1.7;
+    }
+    
+    .recovery-code-input {
+      width: 280px;
+      max-width: 100%;
+      margin: 0 auto 20px;
+      padding: 14px 16px;
+      border: 2px solid var(--gc-border);
+      border-radius: 12px;
+      background: rgba(15, 23, 42, 0.8);
+      color: var(--gc-text);
+      font-size: 16px;
+      text-align: center;
+      text-transform: uppercase;
+      font-family: 'SF Mono', 'Monaco', 'Courier New', monospace;
+      letter-spacing: 4px;
+      font-weight: 600;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.3);
+      display: block;
+    }
+    
+    .recovery-code-input:focus {
+      outline: none;
+      border-color: var(--gc-accent);
+      box-shadow: 0 0 0 4px rgba(99, 102, 241, 0.2), inset 0 2px 4px rgba(0, 0, 0, 0.3);
+      transform: translateY(-1px);
+    }
+    
+    .recovery-code-input::placeholder {
+      opacity: 0.4;
+      text-transform: none;
+      letter-spacing: normal;
+    }
+    
+    #view-recovery {
+      display: none;
+    }
+    
+    #view-recovery.active {
+      display: block;
+    }
+    
+    .attempts-warning {
+      background: linear-gradient(135deg, #fef3c7, #fde68a);
+      border: 1px solid #f59e0b;
+      color: #92400e;
+      padding: 14px 18px;
+      border-radius: 12px;
+      margin-bottom: 24px;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+      animation: shake 0.5s;
+    }
+    
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-8px); }
+      75% { transform: translateX(8px); }
+    }    .link-btn {
+      background: none;
+      border: none;
+      color: var(--gc-accent);
+      text-decoration: underline;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 0;
+      margin-top: 15px;
+    }
+    
+    .link-btn:hover {
+      color: #5558e3;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="lock-card">
+      <!-- PIN Entry View -->
+      <div id="view-pin">
+        <div class="lock-icon">🔒</div>
+        <h1>Parental Lock</h1>
+        <p class="subtitle">Enter your PIN to access parental controls</p>
+        
+        <div id="error-msg" class="error-msg"></div>
+        <div id="attempts-warning" class="attempts-warning" style="display: none;"></div>
+        
+        <input 
+          type="password" 
+          id="pin-input" 
+          class="pin-input" 
+          placeholder="••••" 
+          maxlength="6"
+          autocomplete="off"
+        />
+        
+        <button id="unlock-btn" class="btn btn-primary">Unlock</button>
+        
+        <button id="show-recovery-btn" class="link-btn">Forgot PIN? Use Recovery Code</button>
+      </div>
+      
+      <!-- Recovery Code View -->
+      <div id="view-recovery">
+        <div class="lock-icon">🔑</div>
+        <h1>Use Recovery Code</h1>
+        <p class="recovery-text">
+          Enter one of your 10 recovery codes to reset your PIN. Each code can only be used once.
+        </p>
+        
+        <div id="recovery-error-msg" class="error-msg"></div>
+        
+        <input 
+          type="text" 
+          id="recovery-code-input" 
+          class="recovery-code-input" 
+          placeholder="XXXXXXXX" 
+          maxlength="8"
+          autocomplete="off"
+        />
+        
+        <div class="recovery-title">Set New PIN</div>
+        <input 
+          type="password" 
+          id="new-pin-input" 
+          class="pin-input" 
+          placeholder="New PIN (4-6 digits)" 
+          maxlength="6"
+          autocomplete="off"
+        />
+        
+        <input 
+          type="password" 
+          id="confirm-pin-input" 
+          class="pin-input" 
+          placeholder="Confirm New PIN" 
+          maxlength="6"
+          autocomplete="off"
+        />
+        
+        <button id="reset-pin-btn" class="btn btn-primary">Reset PIN</button>
+        <button id="back-to-pin-btn" class="btn btn-secondary">Back to PIN Entry</button>
+      </div>
+    </div>
+  </div>
+  
+  <script src="pin-lock.js"></script>
+</body>
+</html>

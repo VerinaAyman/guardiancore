@@ -1,15 +1,8 @@
-// GuardianCore Popup - Week 4: Child-facing with gamification cues
-// Import strings module (inline for now)
-const strings = {
-  safe_streak: "Safe Streak",
-  safe_streak_hours: "hours without violations",
-  risk_score: "Risk Score",
-  compliant_message: "Great job! Keep up the safe browsing.",
-  child_view_message: "This is your activity summary. For changes, ask a parent.",
-  settings_open_options: "Open Parent Settings"
-};
+// GuardianCore Popup - Phase 5: Account-aware with per-user stats
+console.log("[Popup] Script starting v0.5.0...");
 
-console.log("[Popup] Script starting v0.4.0...");
+// Current user state
+let currentUser = null;
 
 // Establish persistent connection for real-time updates
 let port = null;
@@ -20,8 +13,113 @@ try {
   console.error("[Popup] Failed to connect:", e);
 }
 
-document.addEventListener("DOMContentLoaded", () => {
+// Check authentication status
+async function checkAuth() {
+  try {
+    // Get auth from storage
+    const { gc_auth_token, gc_user_id, gc_account_type, gc_username } = await chrome.storage.local.get([
+      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username'
+    ]);
+    
+    if (!gc_auth_token || !gc_user_id) {
+      showLoginPrompt();
+      return false;
+    }
+    
+    // Try to get user info from background, but fall back to storage if it fails
+    try {
+      const response = await Promise.race([
+        chrome.runtime.sendMessage({ type: "CHECK_AUTH" }),
+        new Promise((resolve) => setTimeout(() => resolve(null), 1000))
+      ]);
+      
+      if (response && response.authenticated) {
+        currentUser = response.user;
+        showUserInfo();
+        return true;
+      }
+    } catch (bgError) {
+      console.log("[Popup] Background not responding, using storage data");
+    }
+    
+    // Fallback: use storage data directly
+    currentUser = {
+      user_id: gc_user_id,
+      username: gc_username,
+      account_type: gc_account_type
+    };
+    showUserInfo();
+    return true;
+  } catch (error) {
+    console.error("[Popup] Auth check failed:", error);
+    showLoginPrompt();
+    return false;
+  }
+}
+
+// Show user info in header
+function showUserInfo() {
+  const userInfoEl = document.getElementById('user-info');
+  const loginPromptEl = document.getElementById('login-prompt');
+  const contentEl = document.querySelector('.tabs');
+  
+  if (userInfoEl && currentUser) {
+    // Set user info
+    const userNameEl = document.getElementById('user-name');
+    const userTypeEl = document.getElementById('user-type');
+    const avatarEl = userInfoEl.querySelector('.user-avatar');
+    
+    if (userNameEl) userNameEl.textContent = currentUser.username;
+    if (userTypeEl) userTypeEl.textContent = currentUser.account_type;
+    if (avatarEl) avatarEl.textContent = currentUser.username.charAt(0).toUpperCase();
+    
+    userInfoEl.classList.remove('hidden');
+  }
+  
+  if (loginPromptEl) loginPromptEl.classList.add('hidden');
+  if (contentEl) contentEl.classList.remove('hidden');
+}
+
+// Show login prompt
+function showLoginPrompt() {
+  const userInfoEl = document.getElementById('user-info');
+  const loginPromptEl = document.getElementById('login-prompt');
+  const contentEl = document.querySelector('.tabs');
+  
+  if (userInfoEl) userInfoEl.classList.add('hidden');
+  if (loginPromptEl) loginPromptEl.classList.remove('hidden');
+  if (contentEl) contentEl.classList.add('hidden');
+}
+
+// Handle logout
+async function handleLogout() {
+  try {
+    await chrome.runtime.sendMessage({ type: "LOGOUT" });
+    currentUser = null;
+    showLoginPrompt();
+  } catch (error) {
+    console.error("[Popup] Logout failed:", error);
+  }
+}
+
+document.addEventListener("DOMContentLoaded", async () => {
   console.log("[Popup] DOM Content Loaded");
+  
+  // Attach login button FIRST (before checkAuth)
+  const openLoginBtn = document.getElementById("open-login-btn");
+  if (openLoginBtn) {
+    openLoginBtn.addEventListener("click", () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('login.html') });
+    });
+    console.log("[Popup] Open login button attached");
+  }
+  
+  // Check authentication
+  const isAuthenticated = await checkAuth();
+  if (!isAuthenticated) {
+    console.log("[Popup] Not authenticated, showing login prompt");
+    return;
+  }
   
   // Tab switching
   const tabs = document.querySelectorAll('.tab');
@@ -58,6 +156,13 @@ document.addEventListener("DOMContentLoaded", () => {
   
   // Listen for real-time updates from background
   chrome.runtime.onMessage.addListener(handleBackgroundMessage);
+
+  // Logout button
+  const logoutBtn = document.getElementById("logout-btn");
+  if (logoutBtn) {
+    logoutBtn.addEventListener("click", handleLogout);
+    console.log("[Popup] Logout button attached");
+  }
 
   // Save settings button
   const saveBtn = document.getElementById("save-settings");
@@ -193,10 +298,21 @@ function attachDevToolsHandlers() {
   });
 }
 
-function requestXpState() {
-  chrome.runtime.sendMessage({ type: 'GET_XP_STATE' }, (res) => {
-    if (res) updateXpDisplay(res);
-  });
+async function requestXpState() {
+  if (!currentUser) {
+    console.log("[XP] No authenticated user");
+    return;
+  }
+  
+  try {
+    // Load XP state for current user
+    const storageKey = `gc_xp_${currentUser.user_id}`;
+    const result = await chrome.storage.local.get([storageKey]);
+    const xpState = result[storageKey] || { dayKey: null, xp: 0, level: 1 };
+    updateXpDisplay(xpState);
+  } catch (error) {
+    console.error("[XP] Failed to load XP state:", error);
+  }
 }
 
 function updateXpDisplay(state) {
@@ -216,7 +332,30 @@ function updateXpDisplay(state) {
 // Risk breakdown removed
 
 async function loadSettings() {
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(["gc_backend_url", "gc_api_token"]);
+  // Ensure defaults are set (in case background hasn't initialized yet)
+  let { gc_backend_url, gc_api_token, gc_config_initialized } = await chrome.storage.local.get([
+    "gc_backend_url", "gc_api_token", "gc_config_initialized"
+  ]);
+  
+  // Auto-configure if not initialized
+  if (!gc_config_initialized) {
+    const defaults = {};
+    
+    if (!gc_backend_url) {
+      defaults.gc_backend_url = 'http://localhost:8000';
+      gc_backend_url = 'http://localhost:8000';
+    }
+    
+    if (!gc_api_token) {
+      defaults.gc_api_token = 'dev-token-123';
+      gc_api_token = 'dev-token-123';
+    }
+    
+    defaults.gc_config_initialized = true;
+    await chrome.storage.local.set(defaults);
+    console.log("[Popup] Auto-configured defaults");
+  }
+  
   if (gc_backend_url) document.getElementById("backend-url").value = gc_backend_url;
   if (gc_api_token) document.getElementById("api-token").value = gc_api_token;
 }
@@ -329,7 +468,15 @@ async function loadActiveRules() {
 async function loadStats() {
   console.log("[loadStats] Starting...");
   
-  const { gc_backend_url, gc_api_token } = await chrome.storage.local.get(["gc_backend_url", "gc_api_token"]);
+  if (!currentUser) {
+    console.log("[loadStats] No authenticated user");
+    return;
+  }
+  
+  const { gc_backend_url, gc_auth_token } = await chrome.storage.local.get(["gc_backend_url", "gc_auth_token"]);
+  
+  console.log("[loadStats] Backend URL:", gc_backend_url);
+  console.log("[loadStats] Has auth token:", !!gc_auth_token);
   
   if (!gc_backend_url) {
     console.log("[loadStats] No backend URL");
@@ -337,18 +484,31 @@ async function loadStats() {
     if (totalEl) totalEl.textContent = "-";
     return;
   }
+  
+  if (!gc_auth_token) {
+    console.error("[loadStats] No auth token found");
+    const totalEl = document.getElementById("stat-total");
+    if (totalEl) totalEl.textContent = "Error";
+    return;
+  }
 
   try {
-  const url = `${gc_backend_url.replace(/\/+$/, "")}/audit/stats`;
+    // Fetch global audit stats (backend doesn't filter by user_id)
+    const url = `${gc_backend_url.replace(/\/+$/, "")}/audit/stats`;
     console.log("[loadStats] Fetching from:", url);
+    console.log("[loadStats] Using token:", gc_auth_token.substring(0, 20) + "...");
     
     const response = await fetch(url, {
-      headers: { "Authorization": `Bearer ${gc_api_token}` }
+      headers: { "Authorization": `Bearer ${gc_auth_token}` }
     });
 
     console.log("[loadStats] Response status:", response.status);
     
-    if (!response.ok) throw new Error("Failed to fetch");
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[loadStats] Failed to fetch stats:", response.status, errorText);
+      throw new Error(`Failed to fetch: ${response.status}`);
+    }
 
     const stats = await response.json();
     console.log("[loadStats] Stats loaded:", stats);
