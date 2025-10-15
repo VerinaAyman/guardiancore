@@ -320,11 +320,23 @@ function updateXpDisplay(state) {
   const lvlEl = document.getElementById('xp-level');
   const bar = document.getElementById('xp-bar-fill');
   const remainingEl = document.getElementById('xp-remaining');
-  if (xpVal) xpVal.textContent = state.xp ?? 0;
-  if (lvlEl) lvlEl.textContent = state.level ?? 1;
-  if (bar) bar.style.width = `${Math.min(100, Math.round((state.progress || 0)*100))}%`;
+  
+  const currentXp = state.xp ?? 0;
+  const currentLevel = state.level ?? 1;
+  const xpNeeded = 100; // Always 100 XP per level
+  const progress = (currentXp / xpNeeded) * 100;
+  const remaining = xpNeeded - currentXp;
+  
+  console.log("[XP Display]", { currentXp, currentLevel, progress, remaining });
+  
+  if (xpVal) xpVal.textContent = currentXp;
+  if (lvlEl) lvlEl.textContent = currentLevel;
+  if (bar) {
+    const widthPercent = Math.min(100, Math.max(0, progress));
+    bar.style.width = `${widthPercent}%`;
+    console.log("[XP Bar] Set width to:", widthPercent + "%");
+  }
   if (remainingEl) {
-    const remaining = 100 - (state.xp ?? 0);
     remainingEl.textContent = `${remaining} XP to next level`;
   }
 }
@@ -493,7 +505,7 @@ async function loadStats() {
   }
 
   try {
-    // Fetch global audit stats (backend doesn't filter by user_id)
+    // Fetch per-user audit stats (backend filters by JWT user_id)
     const url = `${gc_backend_url.replace(/\/+$/, "")}/audit/stats`;
     console.log("[loadStats] Fetching from:", url);
     console.log("[loadStats] Using token:", gc_auth_token.substring(0, 20) + "...");

@@ -166,11 +166,20 @@ function displayXPState(xpState) {
   
   const xpNeeded = 100 * xpState.level;
   const progress = (xpState.xp / xpNeeded) * 100;
+  const widthPercent = Math.min(progress, 100);
+  
+  console.log("[XP] Displaying state:", { level: xpState.level, xp: xpState.xp, xpNeeded, progress, widthPercent });
   
   if (levelEl) levelEl.textContent = xpState.level;
   if (currentEl) currentEl.textContent = xpState.xp;
   if (neededEl) neededEl.textContent = xpNeeded;
-  if (barEl) barEl.style.width = `${Math.min(progress, 100)}%`;
+  if (barEl) {
+    // Force set width and ensure it sticks
+    barEl.style.width = `${widthPercent}%`;
+    // Set attribute as well for CSS fallback
+    barEl.setAttribute('data-width', widthPercent);
+    console.log("[XP] Bar width set to:", barEl.style.width);
+  }
 }
 
 // ========== STATS MANAGEMENT ==========
@@ -183,40 +192,56 @@ async function loadStats() {
     
     if (!response.ok) {
       console.warn("[Stats] Failed to load stats:", response.status);
-      displayStats({ sites_visited: 0, sites_blocked: 0, time_saved_hours: 0 });
+      displayStats({ 
+        total_audits: 0, 
+        unique_origins: 0, 
+        avg_trackers: 0,
+        csp_coverage: 0,
+        cors_coverage: 0
+      });
       return;
     }
     
     const stats = await response.json();
-    // Map backend stats to UI fields
-    const mappedStats = {
-      sites_visited: stats.unique_origins || 0,
-      sites_blocked: 0, // Not yet tracked
-      time_saved_hours: 0 // Not yet tracked
-    };
-    displayStats(mappedStats);
+    displayStats(stats);
   } catch (error) {
     console.error("[Stats] Load failed:", error);
     // Show default stats if load fails
-    displayStats({ sites_visited: 0, sites_blocked: 0, time_saved_hours: 0 });
+    displayStats({ 
+      total_audits: 0, 
+      unique_origins: 0, 
+      avg_trackers: 0,
+      csp_coverage: 0,
+      cors_coverage: 0
+    });
   }
 }
 
 function displayStats(stats) {
-  const sitesVisitedEl = document.getElementById('stat-sites-visited');
-  const blocksEl = document.getElementById('stat-blocks');
-  const timeSavedEl = document.getElementById('stat-time-saved');
+  const totalAuditsEl = document.getElementById('stat-total-audits');
+  const uniqueOriginsEl = document.getElementById('stat-unique-origins');
+  const avgTrackersEl = document.getElementById('stat-avg-trackers');
+  const cspCoverageEl = document.getElementById('stat-csp-coverage');
+  const corsCoverageEl = document.getElementById('stat-cors-coverage');
   
-  if (sitesVisitedEl) {
-    sitesVisitedEl.textContent = stats.sites_visited || 0;
+  if (totalAuditsEl) {
+    totalAuditsEl.textContent = stats.total_audits || 0;
   }
   
-  if (blocksEl) {
-    blocksEl.textContent = stats.sites_blocked || 0;
+  if (uniqueOriginsEl) {
+    uniqueOriginsEl.textContent = stats.unique_origins || 0;
   }
   
-  if (timeSavedEl) {
-    timeSavedEl.textContent = stats.time_saved_hours || 0;
+  if (avgTrackersEl) {
+    avgTrackersEl.textContent = (stats.avg_trackers || 0).toFixed(2);
+  }
+  
+  if (cspCoverageEl) {
+    cspCoverageEl.textContent = `${Math.round((stats.csp_coverage || 0) * 100)}%`;
+  }
+  
+  if (corsCoverageEl) {
+    corsCoverageEl.textContent = `${Math.round((stats.cors_coverage || 0) * 100)}%`;
   }
 }
 
