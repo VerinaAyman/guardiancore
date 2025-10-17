@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from ..db import async_session, audit_events
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, Integer
 from ..config import settings
 from datetime import datetime, timedelta
 import json
@@ -135,7 +135,8 @@ async def recent_audits(user_id: Optional[int] = Depends(require_bearer), limit:
             
             # Filter by user_id if JWT is used (not API token)
             if user_id is not None:
-                q = q.where(audit_events.c.user_id == user_id)
+                # Cast TEXT column to integer for comparison
+                q = q.where(audit_events.c.user_id.cast(Integer) == user_id)
             
             res = await session.execute(q)
 
@@ -172,7 +173,9 @@ async def audit_stats(user_id: Optional[int] = Depends(require_bearer), window_h
             # Filter by user_id if JWT is used (not API token)
             if user_id is not None:
                 print(f"[audit_stats] Applying user_id filter: {user_id}")
-                q = q.where(audit_events.c.user_id == user_id)
+                # Cast TEXT column to integer for comparison
+                q = q.where(audit_events.c.user_id.cast(Integer) == user_id)
+                print(f"[audit_stats] Compiled SQL so far: {q}")
             else:
                 print("[audit_stats] No user_id filter - returning all records")
             

@@ -444,6 +444,15 @@ function displayChildren() {
           <div style="margin-top:12px; font-size:13px; color:var(--gc-text-dim);">
             <strong>Access Code:</strong> <span class="code-display" style="font-size:18px; display:inline-block; margin-left:8px;">${child.access_code}</span>
           </div>
+          <div style="margin-top:15px; padding-top:15px; border-top:1px solid var(--gc-border);">
+            <div style="font-size:13px; color:var(--gc-text-dim); margin-bottom:8px;">
+              <strong>Activity Tracking:</strong>
+              <span id="tracking-status-${child.id}" style="margin-left:8px; color:#f59e0b;">Checking...</span>
+            </div>
+            <button class="btn btn-sm" id="toggle-tracking-${child.id}" data-child-id="${child.id}" style="font-size:12px;">
+              Manage Tracking
+            </button>
+          </div>
         </div>
         <div class="card-actions">
           <button class="btn btn-sm btn-danger" data-delete-child="${child.id}" data-child-name="${escapeHtml(child.username)}">
@@ -464,6 +473,29 @@ function displayChildren() {
       }
     });
   });
+  
+  // Attach tracking toggle handlers
+  listEl.querySelectorAll('[id^="toggle-tracking-"]').forEach(btn => {
+    const childId = parseInt(btn.dataset.childId);
+    btn.addEventListener('click', () => {
+      // Switch to activity tab and select this child
+      const activityTab = document.querySelector('[data-tab="activity"]');
+      if (activityTab) activityTab.click();
+      
+      setTimeout(() => {
+        const childSelect = document.getElementById('activity-child-select');
+        if (childSelect) {
+          childSelect.value = childId;
+          childSelect.dispatchEvent(new Event('change'));
+        }
+      }, 100);
+    });
+  });
+  
+  // Load tracking status for each child
+  children.forEach(child => {
+    loadChildTrackingStatus(child.id);
+  });
 }
 
 async function deleteChild(childId) {
@@ -479,6 +511,34 @@ async function deleteChild(childId) {
   } catch (error) {
     console.error("[Children] Delete failed:", error);
     alert('Failed to delete child account');
+  }
+}
+
+async function loadChildTrackingStatus(childId) {
+  try {
+    const response = await fetch(`${backendUrl}/activity/settings/${childId}`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) {
+      console.warn(`Failed to load tracking status for child ${childId}`);
+      return;
+    }
+    
+    const settings = await response.json();
+    const statusEl = document.getElementById(`tracking-status-${childId}`);
+    
+    if (statusEl) {
+      if (settings.tracking_enabled) {
+        statusEl.textContent = '✅ Enabled';
+        statusEl.style.color = '#10b981';
+      } else {
+        statusEl.textContent = '⚠️ Disabled';
+        statusEl.style.color = '#f59e0b';
+      }
+    }
+  } catch (error) {
+    console.error(`Failed to load tracking status for child ${childId}:`, error);
   }
 }
 
@@ -1436,8 +1496,435 @@ function loadTabData(tabName) {
     case 'backend':
       loadBackendSettings();
       break;
+    case 'activity':
+      // Activity dashboard loads dynamically based on child selection
+      populateActivityChildren();
+      break;
   }
 }
+
+// ========== ACTIVITY DASHBOARD ==========
+
+let selectedActivityChild = null;
+
+function setupActivityDashboard() {
+  const childSelect = document.getElementById('activity-child-select');
+  if (childSelect) {
+    childSelect.addEventListener('change', handleActivityChildSelect);
+    
+    // Populate with children
+    populateActivityChildren();
+  }
+  
+  const enableBtn = document.getElementById('activity-enable-btn');
+  if (enableBtn) enableBtn.addEventListener('click', handleActivityEnableTracking);
+  
+  const disableBtn = document.getElementById('activity-disable-btn');
+  if (disableBtn) disableBtn.addEventListener('click', handleActivityDisableTracking);
+}
+
+async function populateActivityChildren() {
+  const select = document.getElementById('activity-child-select');
+  if (!select) return;
+  
+  select.innerHTML = '<option value="">-- Select a child --</option>';
+  
+  for (const child of children) {
+    const option = document.createElement('option');
+    option.value = child.id;
+    option.textContent = child.username;
+    select.appendChild(option);
+  }
+}
+
+async function handleActivityChildSelect(event) {
+  const childId = parseInt(event.target.value);
+  if (!childId) {
+    hideActivitySections();
+    return;
+  }
+  
+  selectedActivityChild = children.find(c => c.id === childId);
+  if (!selectedActivityChild) return;
+  
+  // Load tracking status
+  await loadActivityTrackingStatus();
+}
+
+function hideActivitySections() {
+  const statusDiv = document.getElementById('activity-tracking-status');
+  const controlsDiv = document.getElementById('activity-tracking-controls');
+  const contentDiv = document.getElementById('activity-dashboard-content');
+  const emptyDiv = document.getElementById('activity-empty-state');
+  
+  if (statusDiv) statusDiv.style.display = 'none';
+  if (controlsDiv) controlsDiv.style.display = 'none';
+  if (contentDiv) contentDiv.style.display = 'none';
+  if (emptyDiv) emptyDiv.classList.add('hidden');
+}
+
+async function loadActivityTrackingStatus() {
+  try {
+    const response = await fetch(`${backendUrl}/activity/settings/${selectedActivityChild.id}`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) {
+      console.error("[Activity] Failed to load tracking status:", response.status);
+      return;
+    }
+    
+    const settings = await response.json();
+    
+    // Update UI
+    const statusDiv = document.getElementById('activity-tracking-status');
+    const messageEl = document.getElementById('activity-tracking-message');
+    const controlsDiv = document.getElementById('activity-tracking-controls');
+    const enableBtn = document.getElementById('activity-enable-btn');
+    const disableBtn = document.getElementById('activity-disable-btn');
+    const contentDiv = document.getElementById('activity-dashboard-content');
+    const emptyDiv = document.getElementById('activity-empty-state');
+    
+    if (settings.tracking_enabled) {
+      statusDiv.style.display = 'block';
+      statusDiv.style.background = 'rgba(34, 197, 94, 0.1)';
+      statusDiv.style.border = '1px solid rgba(34, 197, 94, 0.3)';
+      messageEl.innerHTML = `✅ Activity tracking is enabled for ${settings.child_username}`;
+      
+      controlsDiv.style.display = 'block';
+      enableBtn.style.display = 'none';
+      disableBtn.style.display = 'inline-block';
+      
+      emptyDiv.classList.add('hidden');
+      
+      // Load dashboard data
+      await loadActivityDashboard();
+      
+    } else {
+      statusDiv.style.display = 'block';
+      statusDiv.style.background = 'rgba(245, 158, 11, 0.1)';
+      statusDiv.style.border = '1px solid rgba(245, 158, 11, 0.3)';
+      messageEl.innerHTML = `⚠️ Activity tracking is disabled for ${settings.child_username}<br>
+        <small style="font-size:13px;">Enable tracking to see browsing activity insights.</small>`;
+      
+      controlsDiv.style.display = 'block';
+      enableBtn.style.display = 'inline-block';
+      disableBtn.style.display = 'none';
+      
+      contentDiv.style.display = 'none';
+      emptyDiv.classList.remove('hidden');
+    }
+    
+  } catch (error) {
+    console.error("[Activity] Load tracking status failed:", error);
+  }
+}
+
+async function handleActivityEnableTracking() {
+  try {
+    const consent = confirm(`Enable Activity Tracking for ${selectedActivityChild.username}?\n\n` +
+      `This will record:\n` +
+      `• Domain-level usage (e.g., "youtube.com", minutes per day)\n` +
+      `• Basic security signals (CSP/CORS presence)\n\n` +
+      `NOT recorded:\n` +
+      `• Full URLs, page titles, or messages\n` +
+      `• Page content or form data\n\n` +
+      `Data is automatically deleted after 30-90 days.\n` +
+      `Your child will be notified about this tracking.`);
+    
+    if (!consent) return;
+    
+    const response = await fetch(`${backendUrl}/activity/settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({
+        child_id: selectedActivityChild.id,
+        tracking_enabled: true
+      })
+    });
+    
+    if (!response.ok) throw new Error('Failed to enable tracking');
+    
+    alert(`Activity tracking enabled for ${selectedActivityChild.username}`);
+    await loadActivityTrackingStatus();
+    await loadChildren(); // Refresh children list to show tracking status
+    
+  } catch (error) {
+    console.error("[Activity] Enable tracking failed:", error);
+    alert('Failed to enable tracking. Please try again.');
+  }
+}
+
+async function handleActivityDisableTracking() {
+  try {
+    const confirmDisable = confirm(`Disable activity tracking for ${selectedActivityChild.username}?\n\nExisting data will remain until it expires (30-90 days).`);
+    if (!confirmDisable) return;
+    
+    const response = await fetch(`${backendUrl}/activity/settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({
+        child_id: selectedActivityChild.id,
+        tracking_enabled: false
+      })
+    });
+    
+    if (!response.ok) throw new Error('Failed to disable tracking');
+    
+    alert(`Activity tracking disabled for ${selectedActivityChild.username}`);
+    await loadActivityTrackingStatus();
+    await loadChildren(); // Refresh children list to show tracking status
+    
+  } catch (error) {
+    console.error("[Activity] Disable tracking failed:", error);
+    alert('Failed to disable tracking. Please try again.');
+  }
+}
+
+async function loadActivityDashboard(days = 7) {
+  try {
+    console.log("[Activity] Loading dashboard for child:", selectedActivityChild.id);
+    const contentDiv = document.getElementById('activity-dashboard-content');
+    const emptyDiv = document.getElementById('activity-empty-state');
+    
+    const response = await fetch(`${backendUrl}/activity/dashboard/${selectedActivityChild.id}?days=${days}`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    console.log("[Activity] Dashboard response status:", response.status);
+    
+    if (!response.ok) {
+      console.error("[Activity] Failed to load dashboard:", response.status);
+      contentDiv.style.display = 'none';
+      emptyDiv.classList.remove('hidden');
+      return;
+    }
+    
+    const data = await response.json();
+    console.log("[Activity] Dashboard data received:", data);
+    
+    if (!data.tracking_enabled) {
+      console.warn("[Activity] Tracking not enabled");
+      contentDiv.style.display = 'none';
+      emptyDiv.classList.remove('hidden');
+      return;
+    }
+    
+    // Show dashboard content even if empty (will show "No Activity Yet" message in table)
+    contentDiv.style.display = 'block';
+    emptyDiv.classList.add('hidden');
+    
+    const dateRangeEl = document.getElementById('activity-date-range');
+    if (dateRangeEl) dateRangeEl.textContent = data.date_range;
+    
+    console.log("[Activity] Rendering", data.summaries.length, "domain summaries");
+    renderActivityTable(data.summaries);
+    
+  } catch (error) {
+    console.error("[Activity] Load dashboard failed:", error);
+    const contentDiv = document.getElementById('activity-dashboard-content');
+    const emptyDiv = document.getElementById('activity-empty-state');
+    if (contentDiv) contentDiv.style.display = 'none';
+    if (emptyDiv) emptyDiv.classList.remove('hidden');
+  }
+}
+
+function renderActivityTable(summaries) {
+  const container = document.getElementById('activity-table-container');
+  if (!container) return;
+  
+  if (summaries.length === 0) {
+    container.innerHTML = `
+      <div style="text-align:center; padding:40px 20px; color:var(--gc-text-dim);">
+        <div style="font-size:48px; margin-bottom:16px; opacity:0.5;">�</div>
+        <h3 style="margin-bottom:8px; color:var(--gc-text);">No Activity Recorded Yet</h3>
+        <p style="font-size:14px; margin-bottom:20px;">Activity data will appear here once the child starts browsing.</p>
+        <p style="font-size:13px; background:rgba(99,102,241,0.1); padding:12px; border-radius:8px; display:inline-block;">
+          💡 <strong>Tip:</strong> Switch to the child's account and browse some websites to see data populate here.
+        </p>
+      </div>
+    `;
+    return;
+  }
+  
+  let html = `
+    <table style="width:100%; border-collapse:collapse; margin-top:10px;">
+      <thead>
+        <tr style="border-bottom:2px solid var(--gc-border); background:rgba(0,0,0,0.2);">
+          <th style="padding:14px 12px; text-align:left; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--gc-text-dim);">Domain</th>
+          <th style="padding:14px 12px; text-align:left; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--gc-text-dim);">Time Spent</th>
+          <th style="padding:14px 12px; text-align:left; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--gc-text-dim);">Today</th>
+          <th style="padding:14px 12px; text-align:center; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--gc-text-dim);">Visits</th>
+          <th style="padding:14px 12px; text-align:center; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--gc-text-dim);">Blocked</th>
+          <th style="padding:14px 12px; text-align:center; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--gc-text-dim);">CSP</th>
+          <th style="padding:14px 12px; text-align:center; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--gc-text-dim);">CORS</th>
+          <th style="padding:14px 12px; text-align:center; font-weight:600; font-size:13px; text-transform:uppercase; letter-spacing:0.5px; color:var(--gc-text-dim);">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+  `;
+  
+  for (const summary of summaries) {
+    const hours = Math.floor(summary.total_time_minutes / 60);
+    const minutes = summary.total_time_minutes % 60;
+    const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+    
+    const todayHours = Math.floor(summary.time_spent_today / 60);
+    const todayMinutes = summary.time_spent_today % 60;
+    const todayStr = todayHours > 0 ? `${todayHours}h ${todayMinutes}m` : `${todayMinutes}m`;
+    
+    html += `
+      <tr class="activity-row" style="border-bottom:1px solid var(--gc-border);">
+        <td style="padding:14px 12px; font-weight:500; color:var(--gc-text);">${escapeHtml(summary.domain)}</td>
+        <td style="padding:14px 12px; color:var(--gc-text-dim);">${timeStr}</td>
+        <td style="padding:14px 12px; color:var(--gc-text-dim);">${todayStr}</td>
+        <td style="padding:14px 12px; text-align:center; color:var(--gc-text-dim);">${summary.visit_count}</td>
+        <td style="padding:14px 12px; text-align:center;">${summary.blocked_count > 0 ? `<span style="background:rgba(245,158,11,0.2); color:rgb(245,158,11); padding:4px 10px; border-radius:6px; font-size:12px; font-weight:600;">${summary.blocked_count}</span>` : '<span style="color:var(--gc-text-dim);">-</span>'}</td>
+        <td style="padding:14px 12px; text-align:center;"><span style="background:${summary.has_csp ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}; color:${summary.has_csp ? 'rgb(34,197,94)' : 'rgb(239,68,68)'}; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:600;">${summary.has_csp ? 'Yes' : 'No'}</span></td>
+        <td style="padding:14px 12px; text-align:center;"><span style="background:${summary.has_cors ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}; color:${summary.has_cors ? 'rgb(34,197,94)' : 'rgb(239,68,68)'}; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:600;">${summary.has_cors ? 'Yes' : 'No'}</span></td>
+        <td style="padding:14px 12px; text-align:center;">
+          <button class="activity-block-btn" data-domain="${escapeHtml(summary.domain)}" style="padding:8px 16px; margin:0 4px; background:rgba(239,68,68,0.15); color:rgb(239,68,68); border:1px solid rgba(239,68,68,0.3); border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">Block</button>
+          <button class="activity-allow-btn" data-domain="${escapeHtml(summary.domain)}" style="padding:8px 16px; margin:0 4px; background:rgba(34,197,94,0.15); color:rgb(34,197,94); border:1px solid rgba(34,197,94,0.3); border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">Allow</button>
+        </td>
+      </tr>
+    `;
+  }
+  
+  html += `
+      </tbody>
+    </table>
+  `;
+  
+  container.innerHTML = html;
+  
+  // Add hover effect to rows
+  const rows = container.querySelectorAll('.activity-row');
+  rows.forEach(row => {
+    row.addEventListener('mouseenter', () => {
+      row.style.background = 'rgba(99,102,241,0.05)';
+    });
+    row.addEventListener('mouseleave', () => {
+      row.style.background = 'transparent';
+    });
+  });
+  
+  // Attach event listeners to buttons
+  const blockButtons = container.querySelectorAll('.activity-block-btn');
+  blockButtons.forEach(btn => {
+    btn.addEventListener('mouseenter', () => {
+      btn.style.background = 'rgba(239,68,68,0.25)';
+      btn.style.borderColor = 'rgba(239,68,68,0.5)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.background = 'rgba(239,68,68,0.15)';
+      btn.style.borderColor = 'rgba(239,68,68,0.3)';
+    });
+    btn.addEventListener('click', () => {
+      const domain = btn.getAttribute('data-domain');
+      handleActivityBlockDomain(domain);
+    });
+  });
+  
+  const allowButtons = container.querySelectorAll('.activity-allow-btn');
+  allowButtons.forEach(btn => {
+    btn.addEventListener('mouseenter', () => {
+      btn.style.background = 'rgba(34,197,94,0.25)';
+      btn.style.borderColor = 'rgba(34,197,94,0.5)';
+    });
+    btn.addEventListener('mouseleave', () => {
+      btn.style.background = 'rgba(34,197,94,0.15)';
+      btn.style.borderColor = 'rgba(34,197,94,0.3)';
+    });
+    btn.addEventListener('click', () => {
+      const domain = btn.getAttribute('data-domain');
+      handleActivityAllowDomain(domain);
+    });
+  });
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+async function handleActivityBlockDomain(domain) {
+  try {
+    if (!selectedActivityChild) return;
+    
+    const confirmBlock = confirm(`Block ${domain} for ${selectedActivityChild.username}?\n\nThis will create a blocklist rule and prevent access to this domain.`);
+    if (!confirmBlock) return;
+    
+    const response = await fetch(`${backendUrl}/activity/actions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({
+        child_id: selectedActivityChild.id,
+        domain: domain,
+        action: 'block',
+        target_type: 'child'
+      })
+    });
+    
+    if (!response.ok) throw new Error('Failed to block domain');
+    
+    const result = await response.json();
+    alert(result.message);
+    
+    await loadActivityDashboard();
+    
+  } catch (error) {
+    console.error("[Activity] Block domain failed:", error);
+    alert('Failed to block domain. Please try again.');
+  }
+}
+
+async function handleActivityAllowDomain(domain) {
+  try {
+    if (!selectedActivityChild) return;
+    
+    const confirmAllow = confirm(`Allow ${domain} for ${selectedActivityChild.username}?\n\nThis will create an allowlist rule and ensure access to this domain is not blocked.`);
+    if (!confirmAllow) return;
+    
+    const response = await fetch(`${backendUrl}/activity/actions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({
+        child_id: selectedActivityChild.id,
+        domain: domain,
+        action: 'allow',
+        target_type: 'child'
+      })
+    });
+    
+    if (!response.ok) throw new Error('Failed to allow domain');
+    
+    const result = await response.json();
+    alert(result.message);
+    
+    await loadActivityDashboard();
+    
+  } catch (error) {
+    console.error("[Activity] Allow domain failed:", error);
+    alert('Failed to allow domain. Please try again.');
+  }
+}
+
+// Make activity functions globally available for onclick handlers
+window.handleActivityBlockDomain = handleActivityBlockDomain;
+window.handleActivityAllowDomain = handleActivityAllowDomain;
 
 // ========== INITIALIZATION ==========
 
@@ -1479,6 +1966,9 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   const changePINBtn = document.getElementById('change-pin-btn');
   if (changePINBtn) changePINBtn.addEventListener('click', changePIN);
+  
+  // Activity Dashboard listeners
+  setupActivityDashboard();
   
   loadProfile();
   loadChildren();

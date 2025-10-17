@@ -258,6 +258,133 @@ function awardXp(event) {
   }).catch(() => {});
 }
 
+// ========== ACTIVITY TRACKING (GDPR-Compliant) ==========
+
+// Extract eTLD+1 domain from URL
+function extractDomain(url) {
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname;
+    
+    // Simple eTLD+1 extraction (domain.com from www.subdomain.domain.com)
+    const parts = hostname.split('.');
+    if (parts.length >= 2) {
+      return parts.slice(-2).join('.');
+    }
+    return hostname;
+  } catch (e) {
+    return null;
+  }
+}
+
+// Track time spent on domain (per tab)
+const domainTimeTracking = new Map(); // tabId -> { domain, startTime }
+
+// Capture activity event (only if tracking enabled for child)
+async function captureActivityEvent(eventType, domain, additionalData = {}) {
+  try {
+    if (!currentUser || currentUser.account_type !== 'child') {
+      return; // Only track child accounts
+    }
+    
+    const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
+    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    
+    const eventData = {
+      domain: domain,
+      event_type: eventType,
+      ...additionalData
+    };
+    
+    // Send to backend (backend will check if tracking is enabled)
+    const response = await fetch(`${backendUrl}/activity/events`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify(eventData)
+    });
+    
+    if (response.ok) {
+      const result = await response.json();
+      if (result.stored) {
+        console.log(`[Activity] Captured ${eventType} event for ${domain}`);
+      }
+    }
+  } catch (error) {
+    // Silently fail - don't disrupt user experience
+    console.debug("[Activity] Failed to capture event:", error);
+  }
+}
+
+// Track tab navigation and time spent
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url) {
+    const domain = extractDomain(tab.url);
+    if (!domain) return;
+    
+    // Stop tracking previous domain for this tab
+    if (domainTimeTracking.has(tabId)) {
+      const prev = domainTimeTracking.get(tabId);
+      const timeSpent = Math.floor((Date.now() - prev.startTime) / 1000);
+      
+      // Only capture if spent more than 5 seconds
+      if (timeSpent >= 5) {
+        const tabData = ensureTab(tabId);
+        captureActivityEvent('time_spent', prev.domain, {
+          duration_seconds: timeSpent,
+          has_csp: tabData.lastCsp,
+          has_cors: tabData.lastCors
+        });
+      }
+    }
+    
+    // Start tracking new domain
+    domainTimeTracking.set(tabId, {
+      domain: domain,
+      startTime: Date.now()
+    });
+    
+    // Capture visit event
+    const tabData = ensureTab(tabId);
+    captureActivityEvent('visit', domain, {
+      has_csp: tabData.lastCsp,
+      has_cors: tabData.lastCors
+    });
+  }
+});
+
+// Clean up tracking when tab is closed
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (domainTimeTracking.has(tabId)) {
+    const prev = domainTimeTracking.get(tabId);
+    const timeSpent = Math.floor((Date.now() - prev.startTime) / 1000);
+    
+    if (timeSpent >= 5) {
+      const tabData = ensureTab(tabId);
+      captureActivityEvent('time_spent', prev.domain, {
+        duration_seconds: timeSpent,
+        has_csp: tabData.lastCsp,
+        has_cors: tabData.lastCors
+      });
+    }
+    
+    domainTimeTracking.delete(tabId);
+  }
+  tabState.delete(tabId);
+});
+
+// Track blocked attempts
+async function captureBlockedAttempt(url, category, reason) {
+  const domain = extractDomain(url);
+  if (!domain) return;
+  
+  await captureActivityEvent('blocked', domain, {
+    blocked_category: category || 'unknown'
+  });
+}
+
 function ensureTab(tid) {
   if (!tabState.has(tid)) {
     tabState.set(tid, {
@@ -632,6 +759,10 @@ chrome.webNavigation.onBeforeNavigate.addListener(
         
         // Negative XP for violation
         awardXp({ trackers: 0, csp: false, cors: false, blocked: true, violation: true });
+        
+        // Capture blocked attempt for activity tracking
+        await captureBlockedAttempt(details.url, rule.category, rule.explanation);
+        
         break;
       }
     }

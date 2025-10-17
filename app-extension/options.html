@@ -137,6 +137,7 @@
         <div class="tab" data-tab="children">Children</div>
         <div class="tab" data-tab="groups">Groups</div>
         <div class="tab" data-tab="rules">Rules</div>
+        <div class="tab" data-tab="activity">📊 Activity</div>
         <div class="tab" data-tab="recovery">Recovery</div>
         <div class="tab" data-tab="backend">Backend</div>
       </div>
@@ -284,6 +285,70 @@
               </div>
               <button class="btn" id="save-backend-btn">Save Settings</button>
               <div id="backend-status" class="status hidden"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Activity Tab -->
+        <div id="activity-tab" class="tab-content">
+          <div class="section">
+            <div class="section-header">
+              <h2 class="section-title">📊 Activity Dashboard</h2>
+              <p style="color:var(--gc-text-dim); font-size:14px;">Monitor your children's browsing activity (GDPR compliant)</p>
+            </div>
+
+            <!-- Child Selector -->
+            <div class="card">
+              <h3 class="card-title">Select Child</h3>
+              <div class="form-group">
+                <select id="activity-child-select" class="form-control">
+                  <option value="">-- Select a child --</option>
+                </select>
+              </div>
+              <div id="activity-tracking-status" style="margin-top:15px; padding:15px; border-radius:8px; display:none;">
+                <p id="activity-tracking-message" style="margin:0;"></p>
+              </div>
+              <div id="activity-tracking-controls" style="margin-top:15px; display:none;">
+                <button class="btn" id="activity-enable-btn">Enable Activity Tracking</button>
+                <button class="btn btn-secondary" id="activity-disable-btn" style="display:none;">Disable Tracking</button>
+              </div>
+            </div>
+
+            <!-- Dashboard Content -->
+            <div id="activity-dashboard-content" style="display:none;">
+              <div class="card">
+                <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                  <h3 class="card-title">Domain Activity</h3>
+                  <div style="font-size:13px; color:var(--gc-text-dim); padding:8px 16px; background:rgba(99,102,241,0.1); border-radius:6px;">
+                    <span id="activity-date-range">Last 7 days</span>
+                  </div>
+                </div>
+                <div id="activity-table-container">
+                  <!-- Table will be inserted here -->
+                </div>
+              </div>
+
+              <!-- GDPR Notice -->
+              <div class="card" style="background:rgba(99,102,241,0.05); border:1px solid rgba(99,102,241,0.2);">
+                <h3 class="card-title">🔒 Privacy & Data Protection (GDPR Compliant)</h3>
+                <p style="color:var(--gc-text-dim); margin-bottom:10px;"><strong>These insights are provided for parental guidance.</strong></p>
+                <ul style="color:var(--gc-text-dim); margin:10px 0; padding-left:20px; line-height:1.8;">
+                  <li>Only domain-level data is collected (e.g., "youtube.com"), not full URLs</li>
+                  <li>No page titles, messages, or page content are stored</li>
+                  <li>Data is automatically deleted after 30-90 days</li>
+                  <li>Security indicators (CSP/CORS) show basic website security posture</li>
+                  <li>Data is never shared with third parties</li>
+                  <li>You can disable tracking at any time</li>
+                </ul>
+                <p style="color:var(--gc-text-dim); margin-top:10px;"><strong>Your child has been notified about what data is collected and why.</strong></p>
+              </div>
+            </div>
+
+            <!-- Empty State -->
+            <div id="activity-empty-state" class="empty-state hidden">
+              <div class="empty-icon">📭</div>
+              <p>No activity data available</p>
+              <p style="font-size:14px; color:var(--gc-text-dim);">Enable tracking for a child to see their browsing activity</p>
             </div>
           </div>
         </div>

@@ -176,6 +176,69 @@ from sqlalchemy import UniqueConstraint
 Index("idx_throttle_lookup", submit_throttle.c.origin_hash, submit_throttle.c.tab_id, unique=True)
 Index("idx_throttle_cleanup", submit_throttle.c.last_submit)
 
+# ========== ACTIVITY TRACKING TABLES (GDPR-Compliant) ==========
+
+# Child activity tracking settings (opt-in per child)
+child_activity_settings = Table(
+    "child_activity_settings", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("child_id", BigInteger, nullable=False, unique=True),  # child user ID
+    Column("parent_id", BigInteger, nullable=False),  # parent who enabled tracking
+    Column("tracking_enabled", Boolean, nullable=False, server_default="false"),
+    Column("enabled_at", TIMESTAMP(timezone=True), nullable=True),
+    Column("disabled_at", TIMESTAMP(timezone=True), nullable=True),
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()")
+)
+
+Index("idx_activity_settings_child", child_activity_settings.c.child_id)
+Index("idx_activity_settings_parent", child_activity_settings.c.parent_id)
+
+# Raw activity events (retained ≤30 days)
+activity_events = Table(
+    "activity_events", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("child_id", BigInteger, nullable=False),
+    Column("domain_hash", CHAR(64), nullable=False),  # SHA-256 of eTLD+1 domain
+    Column("domain", Text, nullable=False),  # eTLD+1 domain (e.g., "youtube.com")
+    Column("event_type", Text, nullable=False),  # 'visit', 'time_spent', 'blocked'
+    Column("duration_seconds", Integer, nullable=True),  # time spent on domain
+    Column("has_csp", Boolean, nullable=True),  # CSP header present
+    Column("has_cors", Boolean, nullable=True),  # CORS headers present
+    Column("blocked_category", Text, nullable=True),  # category if blocked
+    Column("event_date", TIMESTAMP(timezone=True), nullable=False),  # event date (day-level)
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
+    Column("expires_at", TIMESTAMP(timezone=True), nullable=False)  # auto-delete after 30 days
+)
+
+Index("idx_activity_events_child", activity_events.c.child_id)
+Index("idx_activity_events_domain", activity_events.c.domain_hash)
+Index("idx_activity_events_date", activity_events.c.event_date)
+Index("idx_activity_events_expires", activity_events.c.expires_at)
+
+# Daily activity summaries (retained ≤90 days, aggregated from events)
+activity_summaries = Table(
+    "activity_summaries", metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=True),
+    Column("child_id", BigInteger, nullable=False),
+    Column("domain_hash", CHAR(64), nullable=False),
+    Column("domain", Text, nullable=False),
+    Column("summary_date", TIMESTAMP(timezone=True), nullable=False),  # YYYY-MM-DD
+    Column("total_time_seconds", Integer, nullable=False, server_default="0"),
+    Column("visit_count", Integer, nullable=False, server_default="0"),
+    Column("blocked_count", Integer, nullable=False, server_default="0"),
+    Column("has_csp", Boolean, nullable=True),  # aggregated: true if any visit had CSP
+    Column("has_cors", Boolean, nullable=True),  # aggregated: true if any visit had CORS
+    Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
+    Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
+    Column("expires_at", TIMESTAMP(timezone=True), nullable=False)  # auto-delete after 90 days
+)
+
+Index("idx_activity_summaries_child", activity_summaries.c.child_id)
+Index("idx_activity_summaries_date", activity_summaries.c.summary_date)
+Index("idx_activity_summaries_expires", activity_summaries.c.expires_at)
+UniqueConstraint(activity_summaries.c.child_id, activity_summaries.c.domain_hash, activity_summaries.c.summary_date, name='uq_summary_child_domain_date')
+
 async def db_healthcheck():
     """Check database connectivity."""
     async with engine.connect() as conn:
@@ -219,3 +282,74 @@ async def cleanup_old_throttle(minutes: int = 60):
     except Exception as e:
         logger.error(f"Failed to cleanup old throttle: {e}")
         raise
+
+async def cleanup_old_activity_events(days: int = 30):
+    """Delete activity events older than specified days (GDPR retention)."""
+    try:
+        async with async_session() as session:
+            stmt = text(f"DELETE FROM activity_events WHERE expires_at < now()")
+            result = await session.execute(stmt)
+            await session.commit()
+            deleted_count = result.rowcount
+            logger.info(f"Activity retention: deleted {deleted_count} raw events (30-day limit)")
+            return deleted_count
+    except Exception as e:
+        logger.error(f"Failed to cleanup old activity events: {e}")
+        raise
+
+async def cleanup_old_activity_summaries(days: int = 90):
+    """Delete activity summaries older than specified days (GDPR retention)."""
+    try:
+        async with async_session() as session:
+            stmt = text(f"DELETE FROM activity_summaries WHERE expires_at < now()")
+            result = await session.execute(stmt)
+            await session.commit()
+            deleted_count = result.rowcount
+            logger.info(f"Activity retention: deleted {deleted_count} summaries (90-day limit)")
+            return deleted_count
+    except Exception as e:
+        logger.error(f"Failed to cleanup old activity summaries: {e}")
+        raise
+
+async def aggregate_activity_summaries():
+    """Aggregate daily activity events into summaries (runs daily)."""
+    try:
+        async with async_session() as session:
+            # Aggregate events from yesterday into summaries
+            stmt = text("""
+                INSERT INTO activity_summaries (
+                    child_id, domain_hash, domain, summary_date,
+                    total_time_seconds, visit_count, blocked_count,
+                    has_csp, has_cors, expires_at
+                )
+                SELECT 
+                    child_id,
+                    domain_hash,
+                    domain,
+                    DATE(event_date) as summary_date,
+                    COALESCE(SUM(duration_seconds), 0) as total_time_seconds,
+                    COUNT(CASE WHEN event_type = 'visit' THEN 1 END) as visit_count,
+                    COUNT(CASE WHEN event_type = 'blocked' THEN 1 END) as blocked_count,
+                    BOOL_OR(has_csp) as has_csp,
+                    BOOL_OR(has_cors) as has_cors,
+                    (DATE(event_date) + INTERVAL '90 days')::timestamp as expires_at
+                FROM activity_events
+                WHERE DATE(event_date) = CURRENT_DATE - INTERVAL '1 day'
+                GROUP BY child_id, domain_hash, domain, DATE(event_date)
+                ON CONFLICT (child_id, domain_hash, summary_date) 
+                DO UPDATE SET
+                    total_time_seconds = activity_summaries.total_time_seconds + EXCLUDED.total_time_seconds,
+                    visit_count = activity_summaries.visit_count + EXCLUDED.visit_count,
+                    blocked_count = activity_summaries.blocked_count + EXCLUDED.blocked_count,
+                    has_csp = activity_summaries.has_csp OR EXCLUDED.has_csp,
+                    has_cors = activity_summaries.has_cors OR EXCLUDED.has_cors,
+                    updated_at = now()
+            """)
+            result = await session.execute(stmt)
+            await session.commit()
+            logger.info(f"Activity aggregation: processed {result.rowcount} summary rows")
+            return result.rowcount
+    except Exception as e:
+        logger.error(f"Failed to aggregate activity summaries: {e}")
+        raise
+

@@ -6,7 +6,8 @@ from .routers.risk import router as risk_router
 from .routers.webauthn import router as webauthn_router
 from .routers.auth import router as auth_router
 from .routers.accounts import router as accounts_router
-from .db import init_db
+from .routers.activity import router as activity_router
+from .db import init_db, cleanup_old_activity_events, cleanup_old_activity_summaries, aggregate_activity_summaries
 from .config import settings
 from fastapi.middleware.cors import CORSMiddleware
 import logging
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.APP_NAME, 
     version=settings.APP_VERSION,
-    description="GuardianCore Backend API - Phase 5: Account System with Parent-Child Management"
+    description="GuardianCore Backend API - Phase 6: GDPR-Compliant Activity Dashboard"
 )
 
 # Allow extension to call localhost API
@@ -38,6 +39,7 @@ app.include_router(risk_router)
 app.include_router(webauthn_router)
 app.include_router(auth_router)
 app.include_router(accounts_router)
+app.include_router(activity_router)
 
 @app.on_event("startup")
 async def startup_event():
@@ -45,9 +47,44 @@ async def startup_event():
     try:
         await init_db()
         logger.info("GuardianCore backend started successfully")
+        
+        # Schedule retention jobs (run in background)
+        import asyncio
+        asyncio.create_task(run_retention_jobs())
+        
     except Exception as e:
         logger.error(f"Failed to start GuardianCore backend: {e}")
         raise
+
+
+async def run_retention_jobs():
+    """Run periodic retention and aggregation jobs (GDPR compliance)."""
+    import asyncio
+    
+    logger.info("[Retention] Starting periodic retention jobs")
+    
+    while True:
+        try:
+            # Run daily at midnight (or every hour in dev)
+            await asyncio.sleep(3600)  # 1 hour
+            
+            logger.info("[Retention] Running scheduled jobs...")
+            
+            # Aggregate yesterday's events into summaries
+            aggregated = await aggregate_activity_summaries()
+            logger.info(f"[Retention] Aggregated {aggregated} summary rows")
+            
+            # Cleanup expired raw events (30 days)
+            events_deleted = await cleanup_old_activity_events()
+            logger.info(f"[Retention] Deleted {events_deleted} expired events")
+            
+            # Cleanup expired summaries (90 days)
+            summaries_deleted = await cleanup_old_activity_summaries()
+            logger.info(f"[Retention] Deleted {summaries_deleted} expired summaries")
+            
+        except Exception as e:
+            logger.error(f"[Retention] Job failed: {e}")
+            await asyncio.sleep(60)  # Wait a bit before retrying
 
 @app.get("/")
 async def root():

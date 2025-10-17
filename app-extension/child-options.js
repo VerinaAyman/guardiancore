@@ -121,6 +121,9 @@ async function loadProfile() {
     
     childProfile = await response.json();
     displayProfile();
+    
+    // Check tracking status and show notice if enabled
+    await checkTrackingStatus();
   } catch (error) {
     console.error("[Profile] Load failed:", error);
   }
@@ -141,6 +144,32 @@ function displayProfile() {
   
   if (parentEl && childProfile) {
     parentEl.textContent = childProfile.parent_username || 'Unknown';
+  }
+}
+
+// ========== ACTIVITY TRACKING ==========
+
+async function checkTrackingStatus() {
+  try {
+    const response = await fetch(`${backendUrl}/activity/status`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (!response.ok) {
+      console.warn("[Tracking] Failed to check status");
+      return;
+    }
+    
+    const data = await response.json();
+    
+    // Show/hide tracking notice based on status
+    const noticeEl = document.getElementById('tracking-notice');
+    if (noticeEl && data.tracking_enabled) {
+      noticeEl.style.display = 'block';
+      console.log("[Tracking] Notice displayed to child");
+    }
+  } catch (error) {
+    console.error("[Tracking] Status check failed:", error);
   }
 }
 
