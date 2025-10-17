@@ -160,6 +160,7 @@ async def recent_audits(user_id: Optional[int] = Depends(require_bearer), limit:
 @router.get("/stats")
 async def audit_stats(user_id: Optional[int] = Depends(require_bearer), window_hours: Optional[int] = None):
     """Get audit statistics and trends filtered by authenticated user."""
+    print(f"[audit_stats] user_id from JWT: {user_id}")
     try:
         async with async_session() as session:
             q = select(
@@ -170,7 +171,10 @@ async def audit_stats(user_id: Optional[int] = Depends(require_bearer), window_h
             
             # Filter by user_id if JWT is used (not API token)
             if user_id is not None:
+                print(f"[audit_stats] Applying user_id filter: {user_id}")
                 q = q.where(audit_events.c.user_id == user_id)
+            else:
+                print("[audit_stats] No user_id filter - returning all records")
             
             if window_hours is not None:
                 hours = max(1, int(window_hours))
