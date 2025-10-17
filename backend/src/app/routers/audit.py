@@ -60,9 +60,9 @@ def _ensure_dict(obj) -> Dict[str, Any]:
 
 @router.post("/submit")
 async def submit_audit(
-    record: AuditRecord, 
+    record: AuditRecord,
     tab_id: Optional[int] = None,
-    _=Depends(require_bearer)
+    authenticated_user_id: Optional[int] = Depends(require_bearer)
 ):
     """Submit an audit record with throttling to prevent duplicates."""
     try:
@@ -96,9 +96,19 @@ async def submit_audit(
                 )
                 await session.execute(upsert_stmt)
             
+            # Determine which user_id to persist (JWT takes precedence over request payload)
+            # Note: user_id column is TEXT in database, so we convert to string
+            stored_user_id = None
+            if authenticated_user_id is not None:
+                stored_user_id = str(authenticated_user_id)
+            elif record.user_id is not None:
+                stored_user_id = str(record.user_id)
+            
+            logger.info(f"[audit_submit] authenticated_user_id={authenticated_user_id}, record.user_id={record.user_id}, stored_user_id={stored_user_id}")
+
             # Insert audit record
             stmt = insert(audit_events).values(
-                user_id=record.user_id,  # Store user_id from the extension
+                user_id=stored_user_id,
                 origin_hash=record.origin_hash,
                 ts=datetime.utcnow(),
                 client_ts=record.ts_iso,
