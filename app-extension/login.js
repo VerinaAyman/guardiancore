@@ -39,6 +39,18 @@ document.getElementById('show-login')?.addEventListener('click', () => {
   clearStatus('register-status');
 });
 
+document.getElementById('show-forgot-password')?.addEventListener('click', () => {
+  document.getElementById('parent-form').classList.remove('active');
+  document.getElementById('forgot-password-form').classList.add('active');
+  clearStatus('parent-status');
+});
+
+document.getElementById('back-to-login')?.addEventListener('click', () => {
+  document.getElementById('forgot-password-form').classList.remove('active');
+  document.getElementById('parent-form').classList.add('active');
+  clearStatus('forgot-status');
+});
+
 // Parent Login
 document.getElementById('parent-login-btn')?.addEventListener('click', async () => {
   const email = document.getElementById('parent-email').value.trim();
@@ -166,6 +178,70 @@ document.getElementById('register-btn')?.addEventListener('click', async () => {
   }
 });
 
+// Forgot Password - Reset using Recovery Code (password only, PIN reset is separate)
+document.getElementById('forgot-password-btn')?.addEventListener('click', async () => {
+  const email = document.getElementById('forgot-email').value.trim();
+  const recoveryCode = document.getElementById('recovery-code').value.trim().toUpperCase();
+  const newPassword = document.getElementById('forgot-new-password').value;
+  
+  if (!email || !recoveryCode) {
+    showStatus('forgot-status', 'Please enter email and recovery code', 'error');
+    return;
+  }
+  
+  if (!newPassword || newPassword.length < 8) {
+    showStatus('forgot-status', 'New password must be at least 8 characters', 'error');
+    return;
+  }
+  
+  const btn = document.getElementById('forgot-password-btn');
+  btn.disabled = true;
+  btn.textContent = 'Resetting...';
+  
+  try {
+    const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
+    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    
+    const response = await fetch(`${backendUrl}/auth/reset-password-only`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        email, 
+        recovery_code: recoveryCode,
+        new_password: newPassword
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Reset failed');
+    }
+    
+    const data = await response.json();
+    
+    showStatus('forgot-status', '✅ Password reset successfully! You can now sign in.', 'success');
+    
+    // Clear form
+    document.getElementById('forgot-email').value = '';
+    document.getElementById('recovery-code').value = '';
+    document.getElementById('forgot-new-password').value = '';
+    
+    // Redirect to login after 2 seconds
+    setTimeout(() => {
+      document.getElementById('forgot-password-form').classList.remove('active');
+      document.getElementById('parent-form').classList.add('active');
+      clearStatus('forgot-status');
+    }, 2000);
+    
+  } catch (error) {
+    console.error('[Login] Forgot password error:', error);
+    showStatus('forgot-status', `Reset failed: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Reset Password';
+  }
+});
+
 // Child Login
 document.getElementById('child-login-btn')?.addEventListener('click', async () => {
   const code = document.getElementById('child-code').value.trim();
@@ -248,6 +324,18 @@ document.getElementById('child-code')?.addEventListener('keypress', (e) => {
 // Auto-format child code (add visual spacing)
 document.getElementById('child-code')?.addEventListener('input', (e) => {
   e.target.value = e.target.value.replace(/\D/g, '').slice(0, 6);
+});
+
+// Auto-format recovery code
+document.getElementById('recovery-code')?.addEventListener('input', (e) => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8);
+});
+
+// Handle Enter key for forgot password form
+['forgot-email', 'recovery-code', 'forgot-new-password'].forEach(id => {
+  document.getElementById(id)?.addEventListener('keypress', (e) => {
+    if (e.key === 'Enter') document.getElementById('forgot-password-btn')?.click();
+  });
 });
 
 // Helper functions

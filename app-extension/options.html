@@ -102,6 +102,20 @@
       
       /* Utility */
       .hidden { display:none !important; }
+      
+      /* Fix time picker scrolling - make select scrollable within container */
+      select[id*="time"], select[id*="start"], select[id*="end"] {
+        max-height: 250px !important;
+        overflow-y: auto !important;
+        display: block !important;
+      }
+      
+      /* Fix overscroll white space */
+      html, body {
+        overscroll-behavior: none;
+        background-color: var(--gc-bg);
+      }
+      
       .mt-20 { margin-top:20px; }
       .text-center { text-align:center; }
       .grid { display:grid; gap:16px; }
@@ -194,8 +208,18 @@
               <h2 class="section-title">Your Children</h2>
               <button class="btn" id="add-child-btn">+ Add Child</button>
             </div>
+            <!-- Search Bar -->
+            <div style="margin-bottom:20px;">
+              <input type="text" id="children-search" placeholder="🔍 Search children by name..." style="width:100%;padding:12px 14px;background:#0f1a27;border:1px solid #2a3a50;border-radius:10px;color:var(--gc-text);font-family:inherit;font-size:14px;">
+            </div>
             <div id="children-list">
               <!-- Children cards will be loaded here -->
+            </div>
+            <!-- Pagination Controls -->
+            <div id="children-pagination" class="hidden" style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:24px;">
+              <button class="btn btn-sm btn-secondary" id="children-prev-btn" disabled>← Previous</button>
+              <span id="children-page-info" style="color:var(--gc-text-dim);font-size:14px;">Page 1 of 1</span>
+              <button class="btn btn-sm btn-secondary" id="children-next-btn" disabled>Next →</button>
             </div>
             <div id="children-empty" class="empty-state hidden">
               <div class="empty-icon">👶</div>
@@ -228,8 +252,18 @@
               <h2 class="section-title">Child Groups</h2>
               <button class="btn" id="add-group-btn">+ Add Group</button>
             </div>
+            <!-- Search Bar -->
+            <div style="margin-bottom:20px;">
+              <input type="text" id="groups-search" placeholder="🔍 Search groups by name..." style="width:100%;padding:12px 14px;background:#0f1a27;border:1px solid #2a3a50;border-radius:10px;color:var(--gc-text);font-family:inherit;font-size:14px;">
+            </div>
             <div id="groups-list">
               <!-- Groups cards will be loaded here -->
+            </div>
+            <!-- Pagination Controls -->
+            <div id="groups-pagination" class="hidden" style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:24px;">
+              <button class="btn btn-sm btn-secondary" id="groups-prev-btn" disabled>← Previous</button>
+              <span id="groups-page-info" style="color:var(--gc-text-dim);font-size:14px;">Page 1 of 1</span>
+              <button class="btn btn-sm btn-secondary" id="groups-next-btn" disabled>Next →</button>
             </div>
             <div id="groups-empty" class="empty-state hidden">
               <div class="empty-icon">👥</div>
@@ -246,11 +280,46 @@
               <h2 class="section-title">Manage Rules</h2>
             </div>
             <p style="color:var(--gc-text-dim); margin-bottom:20px;">Select a child or group to view and manage their rules.</p>
+            
+            <!-- Filter Buttons -->
+            <div style="display:flex;gap:12px;margin-bottom:16px;">
+              <button class="btn btn-sm" id="rules-filter-all">All</button>
+              <button class="btn btn-sm btn-secondary" id="rules-filter-children">Children Only</button>
+              <button class="btn btn-sm btn-secondary" id="rules-filter-groups">Groups Only</button>
+            </div>
+            
+            <!-- Search for targets -->
+            <div style="margin-bottom:16px;">
+              <input type="text" id="rules-targets-search" placeholder="🔍 Search children and groups..." style="width:100%;padding:12px 14px;background:#0f1a27;border:1px solid #2a3a50;border-radius:10px;color:var(--gc-text);font-family:inherit;font-size:14px;">
+            </div>
+            
             <div id="rules-targets">
               <!-- Target selection will be loaded here -->
             </div>
+            
+            <!-- Pagination for targets -->
+            <div id="rules-targets-pagination" class="hidden" style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:16px;margin-bottom:24px;">
+              <button class="btn btn-sm btn-secondary" id="rules-targets-prev-btn" disabled>← Previous</button>
+              <span id="rules-targets-page-info" style="color:var(--gc-text-dim);font-size:14px;">Page 1 of 1</span>
+              <button class="btn btn-sm btn-secondary" id="rules-targets-next-btn" disabled>Next →</button>
+            </div>
+            
             <div id="rules-list" class="hidden">
-              <!-- Rules will be loaded here -->
+              <!-- Search for rules -->
+              <div style="margin-bottom:16px;">
+                <input type="text" id="rules-list-search" placeholder="🔍 Search rules..." style="width:100%;padding:12px 14px;background:#0f1a27;border:1px solid #2a3a50;border-radius:10px;color:var(--gc-text);font-family:inherit;font-size:14px;">
+              </div>
+              
+              <div id="rules-content">
+                <!-- Rules will be loaded here -->
+              </div>
+              
+              <!-- Pagination for rules -->
+              <div id="rules-list-pagination" class="hidden" style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:16px;">
+                <button class="btn btn-sm btn-secondary" id="rules-list-prev-btn" disabled>← Previous</button>
+                <span id="rules-list-page-info" style="color:var(--gc-text-dim);font-size:14px;">Page 1 of 1</span>
+                <button class="btn btn-sm btn-secondary" id="rules-list-next-btn" disabled>Next →</button>
+              </div>
             </div>
           </div>
         </div>
@@ -300,18 +369,31 @@
             <!-- Child Selector -->
             <div class="card">
               <h3 class="card-title">Select Child</h3>
-              <div class="form-group">
-                <select id="activity-child-select" class="form-control">
-                  <option value="">-- Select a child --</option>
-                </select>
+              
+              <!-- Search for children -->
+              <div style="margin-bottom:16px;">
+                <input type="text" id="activity-children-search" placeholder="🔍 Search children..." style="width:100%;padding:12px 14px;background:#0f1a27;border:1px solid #2a3a50;border-radius:10px;color:var(--gc-text);font-family:inherit;font-size:14px;">
               </div>
-              <div id="activity-tracking-status" style="margin-top:15px; padding:15px; border-radius:8px; display:none;">
-                <p id="activity-tracking-message" style="margin:0;"></p>
+              
+              <div id="activity-children-list">
+                <!-- Children cards will be loaded here -->
               </div>
-              <div id="activity-tracking-controls" style="margin-top:15px; display:none;">
-                <button class="btn" id="activity-enable-btn">Enable Activity Tracking</button>
-                <button class="btn btn-secondary" id="activity-disable-btn" style="display:none;">Disable Tracking</button>
+              
+              <!-- Pagination for children -->
+              <div id="activity-children-pagination" class="hidden" style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:16px;">
+                <button class="btn btn-sm btn-secondary" id="activity-children-prev-btn" disabled>← Previous</button>
+                <span id="activity-children-page-info" style="color:var(--gc-text-dim);font-size:14px;">Page 1 of 1</span>
+                <button class="btn btn-sm btn-secondary" id="activity-children-next-btn" disabled>Next →</button>
               </div>
+            </div>
+            
+            <!-- Tracking Status (shown after selecting a child) -->
+            <div id="activity-tracking-status" style="margin-top:15px; padding:15px; border-radius:8px; display:none;">
+              <p id="activity-tracking-message" style="margin:0;"></p>
+            </div>
+            <div id="activity-tracking-controls" style="margin-top:15px; display:none;">
+              <button class="btn" id="activity-enable-btn">Enable Activity Tracking</button>
+              <button class="btn btn-secondary" id="activity-disable-btn" style="display:none;">Disable Tracking</button>
             </div>
 
             <!-- Dashboard Content -->
@@ -323,8 +405,18 @@
                     <span id="activity-date-range">Last 7 days</span>
                   </div>
                 </div>
+                <!-- Search Bar -->
+                <div style="margin:16px 0;">
+                  <input type="text" id="activity-search" placeholder="🔍 Search domains..." style="width:100%;padding:12px 14px;background:#0f1a27;border:1px solid #2a3a50;border-radius:10px;color:var(--gc-text);font-family:inherit;font-size:14px;">
+                </div>
                 <div id="activity-table-container">
                   <!-- Table will be inserted here -->
+                </div>
+                <!-- Pagination Controls -->
+                <div id="activity-pagination" class="hidden" style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:24px;">
+                  <button class="btn btn-sm btn-secondary" id="activity-prev-btn" disabled>← Previous</button>
+                  <span id="activity-page-info" style="color:var(--gc-text-dim);font-size:14px;">Page 1 of 1</span>
+                  <button class="btn btn-sm btn-secondary" id="activity-next-btn" disabled>Next →</button>
                 </div>
               </div>
 

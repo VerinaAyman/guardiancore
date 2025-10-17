@@ -237,6 +237,13 @@
         mix-blend-mode:overlay; 
       }
       .hidden { display:none !important; }
+      #recovery-code { text-transform:uppercase; letter-spacing:2px; font-family:monospace; }
+      
+      /* Fix overscroll white space */
+      html, body {
+        overscroll-behavior: none;
+        background-color: var(--gc-bg);
+      }
     </style>
   </head>
   <body>
@@ -267,7 +274,8 @@
           </div>
           <button id="parent-login-btn">Sign In</button>
           <div class="link-text">
-            Don't have an account? <a id="show-register">Sign up as parent</a>
+            Don't have an account? <a id="show-register">Sign up as parent</a><br>
+            <a id="show-forgot-password" style="margin-top:8px;display:inline-block;">Forgot password?</a>
           </div>
           <div class="status" id="parent-status"></div>
         </div>
@@ -294,6 +302,30 @@
             Already have an account? <a id="show-login">Sign in</a>
           </div>
           <div class="status" id="register-status"></div>
+        </div>
+
+        <!-- Forgot Password Form -->
+        <div class="login-form" id="forgot-password-form">
+          <div class="info-box">
+            Use one of your recovery codes to reset your password or PIN. Each code can only be used once.
+          </div>
+          <div class="form-group">
+            <label>Email</label>
+            <input type="email" id="forgot-email" placeholder="parent@example.com" autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label>Recovery Code</label>
+            <input type="text" id="recovery-code" placeholder="Enter recovery code" autocomplete="off" style="text-transform:uppercase;">
+          </div>
+          <div class="form-group">
+            <label>New Password</label>
+            <input type="password" id="forgot-new-password" placeholder="At least 8 characters" autocomplete="new-password">
+          </div>
+          <button id="forgot-password-btn">Reset Password</button>
+          <div class="link-text">
+            Remember your password? <a id="back-to-login">Sign in</a>
+          </div>
+          <div class="status" id="forgot-status"></div>
         </div>
 
         <!-- Child Login Form -->

@@ -12,6 +12,27 @@ let isPINVerified = false;
 // Backend URL
 let backendUrl = 'http://localhost:8000';
 
+// Pagination state
+const ITEMS_PER_PAGE = 5;
+let childrenCurrentPage = 1;
+let childrenSearchQuery = '';
+let groupsCurrentPage = 1;
+let groupsSearchQuery = '';
+let activityCurrentPage = 1;
+let activitySearchQuery = '';
+let activitySummaries = []; // Store all summaries for filtering/pagination
+let activityChildrenCurrentPage = 1;
+let activityChildrenSearchQuery = '';
+let activityChildren = []; // Store children for activity selector
+let rulesTargetsCurrentPage = 1;
+let rulesTargetsSearchQuery = '';
+let rulesTargetsFilter = 'all'; // 'all', 'child', 'group'
+let rulesTargets = []; // Store all targets for filtering/pagination
+let rulesListCurrentPage = 1;
+let rulesListSearchQuery = '';
+let currentRules = []; // Store current rules for filtering/pagination
+let currentRuleTarget = { type: '', id: '', name: '' }; // Store current target info
+
 // ========== AUTHENTICATION ==========
 
 async function checkAuth() {
@@ -145,8 +166,8 @@ async function verifyPINOnLoad() {
 
 async function showPINSetup() {
   const setupPIN = prompt('Set up a Parental Lock PIN (4-6 digits):');
-  if (!setupPIN || setupPIN.length < 4) {
-    alert('PIN must be at least 4 digits. Please try again.');
+  if (!setupPIN || setupPIN.length < 4 || !/^\d{4,6}$/.test(setupPIN)) {
+    alert('PIN must be 4-6 digits. Please try again.');
     return showPINSetup();
   }
   
@@ -156,21 +177,38 @@ async function showPINSetup() {
     return showPINSetup();
   }
   
-  // Generate 10 recovery codes
-  recoveryCodes = generateRecoveryCodes(10);
-  
-  // Store PIN and recovery codes
-  await chrome.storage.local.set({
-    gc_pin: setupPIN,
-    gc_recovery_codes: recoveryCodes
-  });
-  
-  pin = setupPIN;
-  
-  // Download recovery codes
-  downloadRecoveryCodes(recoveryCodes, 'guardiancore-recovery-codes-initial.txt');
-  
-  alert(`PIN set successfully!\n\nYour 10 Recovery Codes have been downloaded.\n\nSave this file in a secure location!`);
+  try {
+    // Set PIN via backend API
+    const response = await fetch(`${backendUrl}/accounts/pin/set`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({ pin: setupPIN })
+    });
+    
+    if (!response.ok) throw new Error('Failed to set PIN');
+    
+    const data = await response.json();
+    recoveryCodes = data.recovery_codes;
+    
+    // Store PIN and recovery codes locally for quick access
+    await chrome.storage.local.set({
+      gc_pin: setupPIN,
+      gc_recovery_codes: recoveryCodes
+    });
+    
+    pin = setupPIN;
+    
+    // Download recovery codes
+    downloadRecoveryCodes(recoveryCodes, 'guardiancore-recovery-codes-initial.txt');
+    
+    alert(`PIN set successfully!\n\nYour 10 Recovery Codes have been downloaded.\n\nSave this file in a secure location!`);
+  } catch (error) {
+    console.error('[PIN] Setup failed:', error);
+    alert('Failed to set PIN. Please try again.');
+  }
 }
 
 function generateRecoveryCodes(count) {
@@ -213,28 +251,67 @@ async function regenerateRecoveryCodes() {
     return;
   }
   
-  // Generate new codes
-  const newCodes = generateRecoveryCodes(10);
-  
-  // Store new codes and expire old ones
-  await chrome.storage.local.set({
-    gc_recovery_codes: newCodes
-  });
-  
-  recoveryCodes = newCodes;
-  
-  // Download new codes
-  downloadRecoveryCodes(newCodes, `guardiancore-recovery-codes-${Date.now()}.txt`);
-  
-  alert('New Recovery Codes Generated!\n\nThe file has been downloaded.\n\nOld codes are now invalid. Save the new file!');
-  
-  displayRecoveryCodes();
+  try {
+    // Regenerate codes via backend API
+    const response = await fetch(`${backendUrl}/accounts/recovery-codes/regenerate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      }
+    });
+    
+    if (!response.ok) throw new Error('Failed to regenerate recovery codes');
+    
+    const data = await response.json();
+    const newCodes = data.recovery_codes;
+    
+    // Store new codes locally
+    await chrome.storage.local.set({
+      gc_recovery_codes: newCodes
+    });
+    
+    recoveryCodes = newCodes;
+    
+    // Download new codes
+    downloadRecoveryCodes(newCodes, `guardiancore-recovery-codes-${Date.now()}.txt`);
+    
+    alert('New Recovery Codes Generated!\n\nThe file has been downloaded.\n\nOld codes are now invalid. Save the new file!');
+    
+    displayRecoveryCodes();
+  } catch (error) {
+    console.error('[Recovery] Regenerate failed:', error);
+    alert('Failed to regenerate recovery codes. Please try again.');
+  }
 }
 
 async function displayRecoveryCodes() {
-  const storage = await chrome.storage.local.get(['gc_recovery_codes', 'gc_pin']);
-  recoveryCodes = storage.gc_recovery_codes || [];
-  pin = storage.gc_pin || null;
+  try {
+    // Fetch recovery codes from backend
+    const response = await fetch(`${backendUrl}/accounts/recovery-codes`, {
+      headers: { 'Authorization': `Bearer ${currentUser.token}` }
+    });
+    
+    if (response.ok) {
+      const data = await response.json();
+      recoveryCodes = data.recovery_codes || [];
+      
+      // Also sync with local storage
+      const storage = await chrome.storage.local.get(['gc_pin']);
+      pin = storage.gc_pin || null;
+    } else {
+      // Fallback to local storage
+      const storage = await chrome.storage.local.get(['gc_recovery_codes', 'gc_pin']);
+      recoveryCodes = storage.gc_recovery_codes || [];
+      pin = storage.gc_pin || null;
+    }
+  } catch (error) {
+    console.error('[Recovery] Load failed:', error);
+    // Fallback to local storage
+    const storage = await chrome.storage.local.get(['gc_recovery_codes', 'gc_pin']);
+    recoveryCodes = storage.gc_recovery_codes || [];
+    pin = storage.gc_pin || null;
+  }
   
   const codesContainer = document.getElementById('recovery-codes-list');
   if (codesContainer) {
@@ -279,8 +356,8 @@ async function changePIN() {
   }
   
   const newPIN = prompt('Enter new PIN (4-6 digits):');
-  if (!newPIN || newPIN.length < 4) {
-    alert('PIN must be at least 4 digits.');
+  if (!newPIN || newPIN.length < 4 || !/^\d{4,6}$/.test(newPIN)) {
+    alert('PIN must be 4-6 digits.');
     return;
   }
   
@@ -290,11 +367,35 @@ async function changePIN() {
     return;
   }
   
-  await chrome.storage.local.set({ gc_pin: newPIN });
-  pin = newPIN;
-  
-  alert('PIN changed successfully!');
-  displayRecoveryCodes();
+  try {
+    // Change PIN via backend API
+    const response = await fetch(`${backendUrl}/accounts/pin/change`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({ 
+        current_pin: enteredPIN,
+        new_pin: newPIN 
+      })
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to change PIN');
+    }
+    
+    // Update local storage
+    await chrome.storage.local.set({ gc_pin: newPIN });
+    pin = newPIN;
+    
+    alert('PIN changed successfully!');
+    displayRecoveryCodes();
+  } catch (error) {
+    console.error('[PIN] Change failed:', error);
+    alert(`Failed to change PIN: ${error.message}`);
+  }
 }
 
 // ========== PROFILE MANAGEMENT ==========
@@ -422,18 +523,62 @@ async function loadChildren() {
 function displayChildren() {
   const listEl = document.getElementById('children-list');
   const emptyEl = document.getElementById('children-empty');
+  const paginationEl = document.getElementById('children-pagination');
   
   if (!listEl) return;
   
-  if (children.length === 0) {
+  // Filter children based on search query
+  let filteredChildren = children;
+  if (childrenSearchQuery) {
+    filteredChildren = children.filter(child => 
+      child.username.toLowerCase().includes(childrenSearchQuery.toLowerCase())
+    );
+  }
+  
+  if (filteredChildren.length === 0) {
     listEl.innerHTML = '';
-    if (emptyEl) emptyEl.classList.remove('hidden');
+    if (paginationEl) paginationEl.classList.add('hidden');
+    if (emptyEl) {
+      if (childrenSearchQuery) {
+        emptyEl.innerHTML = `
+          <div class="empty-icon">🔍</div>
+          <p>No children found matching "${escapeHtml(childrenSearchQuery)}"</p>
+        `;
+      } else {
+        emptyEl.innerHTML = `
+          <div class="empty-icon">👶</div>
+          <p>No children added yet</p>
+          <button class="btn" id="add-first-child-btn">Add Your First Child</button>
+        `;
+      }
+      emptyEl.classList.remove('hidden');
+    }
     return;
   }
   
   if (emptyEl) emptyEl.classList.add('hidden');
   
-  listEl.innerHTML = children.map(child => `
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredChildren.length / ITEMS_PER_PAGE);
+  const startIndex = (childrenCurrentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedChildren = filteredChildren.slice(startIndex, endIndex);
+  
+  // Update pagination controls
+  if (paginationEl && totalPages > 1) {
+    paginationEl.classList.remove('hidden');
+    const prevBtn = document.getElementById('children-prev-btn');
+    const nextBtn = document.getElementById('children-next-btn');
+    const pageInfo = document.getElementById('children-page-info');
+    
+    if (prevBtn) prevBtn.disabled = childrenCurrentPage === 1;
+    if (nextBtn) nextBtn.disabled = childrenCurrentPage === totalPages;
+    if (pageInfo) pageInfo.textContent = `Page ${childrenCurrentPage} of ${totalPages}`;
+  } else if (paginationEl) {
+    paginationEl.classList.add('hidden');
+  }
+  
+  listEl.innerHTML = paginatedChildren.map(child => `
     <div class="card">
       <div class="card-header">
         <div>
@@ -619,18 +764,62 @@ async function loadGroups() {
 function displayGroups() {
   const listEl = document.getElementById('groups-list');
   const emptyEl = document.getElementById('groups-empty');
+  const paginationEl = document.getElementById('groups-pagination');
   
   if (!listEl) return;
   
-  if (groups.length === 0) {
+  // Filter groups based on search query
+  let filteredGroups = groups;
+  if (groupsSearchQuery) {
+    filteredGroups = groups.filter(group => 
+      group.name.toLowerCase().includes(groupsSearchQuery.toLowerCase())
+    );
+  }
+  
+  if (filteredGroups.length === 0) {
     listEl.innerHTML = '';
-    if (emptyEl) emptyEl.classList.remove('hidden');
+    if (paginationEl) paginationEl.classList.add('hidden');
+    if (emptyEl) {
+      if (groupsSearchQuery) {
+        emptyEl.innerHTML = `
+          <div class="empty-icon">🔍</div>
+          <p>No groups found matching "${escapeHtml(groupsSearchQuery)}"</p>
+        `;
+      } else {
+        emptyEl.innerHTML = `
+          <div class="empty-icon">👥</div>
+          <p>No groups created yet</p>
+          <button class="btn" id="add-first-group-btn">Create Your First Group</button>
+        `;
+      }
+      emptyEl.classList.remove('hidden');
+    }
     return;
   }
   
   if (emptyEl) emptyEl.classList.add('hidden');
   
-  listEl.innerHTML = groups.map(group => `
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredGroups.length / ITEMS_PER_PAGE);
+  const startIndex = (groupsCurrentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedGroups = filteredGroups.slice(startIndex, endIndex);
+  
+  // Update pagination controls
+  if (paginationEl && totalPages > 1) {
+    paginationEl.classList.remove('hidden');
+    const prevBtn = document.getElementById('groups-prev-btn');
+    const nextBtn = document.getElementById('groups-next-btn');
+    const pageInfo = document.getElementById('groups-page-info');
+    
+    if (prevBtn) prevBtn.disabled = groupsCurrentPage === 1;
+    if (nextBtn) nextBtn.disabled = groupsCurrentPage === totalPages;
+    if (pageInfo) pageInfo.textContent = `Page ${groupsCurrentPage} of ${totalPages}`;
+  } else if (paginationEl) {
+    paginationEl.classList.add('hidden');
+  }
+  
+  listEl.innerHTML = paginatedGroups.map(group => `
     <div class="card">
       <div class="card-header">
         <div>
@@ -860,22 +1049,76 @@ async function showGroupMembersModal(groupId) {
 // ========== RULES MANAGEMENT ==========
 
 async function loadRulesTargets() {
-  const targetsEl = document.getElementById('rules-targets');
-  if (!targetsEl) return;
-  
-  const targets = [
+  rulesTargets = [
     ...children.map(c => ({ type: 'child', id: c.id, name: c.username })),
     ...groups.map(g => ({ type: 'group', id: g.id, name: g.name }))
   ];
   
-  if (targets.length === 0) {
-    targetsEl.innerHTML = '<p style="color:var(--gc-text-dim);">Create a child account or group first.</p>';
+  rulesTargetsCurrentPage = 1;
+  rulesTargetsSearchQuery = '';
+  renderRulesTargets();
+}
+
+function renderRulesTargets() {
+  const targetsEl = document.getElementById('rules-targets');
+  const paginationEl = document.getElementById('rules-targets-pagination');
+  if (!targetsEl) return;
+  
+  // Filter targets based on type filter
+  let filteredTargets = rulesTargets;
+  if (rulesTargetsFilter === 'child') {
+    filteredTargets = rulesTargets.filter(t => t.type === 'child');
+  } else if (rulesTargetsFilter === 'group') {
+    filteredTargets = rulesTargets.filter(t => t.type === 'group');
+  }
+  
+  // Filter targets based on search
+  if (rulesTargetsSearchQuery) {
+    filteredTargets = filteredTargets.filter(t =>
+      t.name.toLowerCase().includes(rulesTargetsSearchQuery.toLowerCase())
+    );
+  }
+  
+  if (filteredTargets.length === 0) {
+    if (paginationEl) paginationEl.classList.add('hidden');
+    
+    if (rulesTargetsSearchQuery) {
+      targetsEl.innerHTML = `
+        <div style="text-align:center; padding:40px 20px; color:var(--gc-text-dim);">
+          <div style="font-size:48px; margin-bottom:16px; opacity:0.5;">🔍</div>
+          <h3 style="margin-bottom:8px; color:var(--gc-text);">No Matches Found</h3>
+          <p style="font-size:14px;">No children or groups match "${escapeHtml(rulesTargetsSearchQuery)}"</p>
+        </div>
+      `;
+    } else {
+      targetsEl.innerHTML = '<p style="color:var(--gc-text-dim);">Create a child account or group first.</p>';
+    }
     return;
+  }
+  
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredTargets.length / ITEMS_PER_PAGE);
+  const startIndex = (rulesTargetsCurrentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedTargets = filteredTargets.slice(startIndex, endIndex);
+  
+  // Update pagination controls
+  if (paginationEl && totalPages > 1) {
+    paginationEl.classList.remove('hidden');
+    const prevBtn = document.getElementById('rules-targets-prev-btn');
+    const nextBtn = document.getElementById('rules-targets-next-btn');
+    const pageInfo = document.getElementById('rules-targets-page-info');
+    
+    if (prevBtn) prevBtn.disabled = rulesTargetsCurrentPage === 1;
+    if (nextBtn) nextBtn.disabled = rulesTargetsCurrentPage === totalPages;
+    if (pageInfo) pageInfo.textContent = `Page ${rulesTargetsCurrentPage} of ${totalPages}`;
+  } else if (paginationEl) {
+    paginationEl.classList.add('hidden');
   }
   
   targetsEl.innerHTML = `
     <div class="grid grid-2">
-      ${targets.map(target => `
+      ${paginatedTargets.map(target => `
         <div class="card" style="cursor:pointer;" data-load-rules="${target.type}" data-target-id="${target.id}" data-target-name="${escapeHtml(target.name)}">
           <h3 class="card-title">${escapeHtml(target.name)}</h3>
           <span class="badge badge-${target.type}">${target.type}</span>
@@ -904,20 +1147,58 @@ async function loadRulesForTarget(targetType, targetId, targetName) {
     if (!response.ok) throw new Error('Failed to load rules');
     
     const rules = await response.json();
-    displayRules(rules, targetType, targetId, targetName);
+    currentRules = rules;
+    currentRuleTarget = { type: targetType, id: targetId, name: targetName };
+    rulesListCurrentPage = 1;
+    rulesListSearchQuery = '';
+    displayRules();
   } catch (error) {
     console.error("[Rules] Load failed:", error);
     alert('Failed to load rules');
   }
 }
 
-function displayRules(rules, targetType, targetId, targetName) {
+function displayRules() {
   const rulesListEl = document.getElementById('rules-list');
-  if (!rulesListEl) return;
+  const rulesContentEl = document.getElementById('rules-content');
+  const paginationEl = document.getElementById('rules-list-pagination');
+  if (!rulesListEl || !rulesContentEl) return;
+  
+  const { type: targetType, id: targetId, name: targetName } = currentRuleTarget;
   
   rulesListEl.classList.remove('hidden');
   
-  rulesListEl.innerHTML = `
+  // Filter rules based on search
+  let filteredRules = currentRules;
+  if (rulesListSearchQuery) {
+    filteredRules = currentRules.filter(r =>
+      r.pattern.toLowerCase().includes(rulesListSearchQuery.toLowerCase()) ||
+      (r.explanation && r.explanation.toLowerCase().includes(rulesListSearchQuery.toLowerCase())) ||
+      r.rule_type.toLowerCase().includes(rulesListSearchQuery.toLowerCase())
+    );
+  }
+  
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredRules.length / ITEMS_PER_PAGE);
+  const startIndex = (rulesListCurrentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedRules = filteredRules.slice(startIndex, endIndex);
+  
+  // Update pagination controls
+  if (paginationEl && filteredRules.length > ITEMS_PER_PAGE) {
+    paginationEl.classList.remove('hidden');
+    const prevBtn = document.getElementById('rules-list-prev-btn');
+    const nextBtn = document.getElementById('rules-list-next-btn');
+    const pageInfo = document.getElementById('rules-list-page-info');
+    
+    if (prevBtn) prevBtn.disabled = rulesListCurrentPage === 1;
+    if (nextBtn) nextBtn.disabled = rulesListCurrentPage === totalPages;
+    if (pageInfo) pageInfo.textContent = `Page ${rulesListCurrentPage} of ${totalPages}`;
+  } else if (paginationEl) {
+    paginationEl.classList.add('hidden');
+  }
+  
+  rulesContentEl.innerHTML = `
     <div class="section-header">
       <h2 class="section-title">Rules for ${escapeHtml(targetName)}</h2>
       <div style="display:flex; gap:8px;">
@@ -928,14 +1209,22 @@ function displayRules(rules, targetType, targetId, targetName) {
       </div>
     </div>
     
-    ${rules.length === 0 ? `
-      <div class="empty-state">
-        <div class="empty-icon">📋</div>
-        <p>No rules defined yet</p>
-        <button class="btn" data-add-rule="${targetType}" data-target-id="${targetId}" data-target-name="${escapeHtml(targetName)}">Create First Rule</button>
-      </div>
-    ` : `
-      ${rules.map(rule => `
+    ${filteredRules.length === 0 ? (
+      rulesListSearchQuery ? `
+        <div style="text-align:center; padding:40px 20px; color:var(--gc-text-dim);">
+          <div style="font-size:48px; margin-bottom:16px; opacity:0.5;">🔍</div>
+          <h3 style="margin-bottom:8px; color:var(--gc-text);">No Rules Found</h3>
+          <p style="font-size:14px;">No rules match "${escapeHtml(rulesListSearchQuery)}"</p>
+        </div>
+      ` : `
+        <div class="empty-state">
+          <div class="empty-icon">📋</div>
+          <p>No rules defined yet</p>
+          <button class="btn" data-add-rule="${targetType}" data-target-id="${targetId}" data-target-name="${escapeHtml(targetName)}">Create First Rule</button>
+        </div>
+      `
+    ) : `
+      ${paginatedRules.map(rule => `
         <div class="card">
           <div class="card-header">
             <div>
@@ -962,7 +1251,7 @@ function displayRules(rules, targetType, targetId, targetName) {
   `;
   
   // Attach event listeners
-  rulesListEl.querySelectorAll('[data-add-rule]').forEach(btn => {
+  rulesContentEl.querySelectorAll('[data-add-rule]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const type = e.target.dataset.addRule;
       const id = e.target.dataset.targetId;
@@ -971,7 +1260,7 @@ function displayRules(rules, targetType, targetId, targetName) {
     });
   });
   
-  rulesListEl.querySelectorAll('[data-export-rules]').forEach(btn => {
+  rulesContentEl.querySelectorAll('[data-export-rules]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const type = e.target.dataset.exportRules;
       const id = e.target.dataset.targetId;
@@ -980,7 +1269,7 @@ function displayRules(rules, targetType, targetId, targetName) {
     });
   });
   
-  rulesListEl.querySelectorAll('[data-import-rules]').forEach(btn => {
+  rulesContentEl.querySelectorAll('[data-import-rules]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const type = e.target.dataset.importRules;
       const id = e.target.dataset.targetId;
@@ -989,14 +1278,14 @@ function displayRules(rules, targetType, targetId, targetName) {
     });
   });
   
-  rulesListEl.querySelectorAll('[data-back-rules]').forEach(btn => {
+  rulesContentEl.querySelectorAll('[data-back-rules]').forEach(btn => {
     btn.addEventListener('click', () => {
       loadRulesTargets();
       rulesListEl.classList.add('hidden');
     });
   });
   
-  rulesListEl.querySelectorAll('[data-toggle-rule]').forEach(btn => {
+  rulesContentEl.querySelectorAll('[data-toggle-rule]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const ruleId = e.target.dataset.toggleRule;
       const enabled = e.target.dataset.enabled === 'true';
@@ -1007,7 +1296,7 @@ function displayRules(rules, targetType, targetId, targetName) {
     });
   });
   
-  rulesListEl.querySelectorAll('[data-delete-rule]').forEach(btn => {
+  rulesContentEl.querySelectorAll('[data-delete-rule]').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const ruleId = e.target.dataset.deleteRule;
       const type = e.target.dataset.type;
@@ -1069,16 +1358,21 @@ function showAddRuleModal(targetType, targetId, targetName) {
         </div>
         
         <label style="display:block;margin-bottom:10px;font-weight:600;font-size:13px;letter-spacing:0.05em;text-transform:uppercase;color:var(--gc-text-dim);">Time Range</label>
-        <div style="display:flex;gap:12px;align-items:center;">
-          <select id="time-start" style="flex:1;padding:12px 14px;border:2px solid var(--gc-border);border-radius:12px;background:rgba(15,23,42,0.8);color:var(--gc-text);font-size:14px;cursor:pointer;">
-            ${generateTimeOptions()}
-          </select>
-          <span style="color:var(--gc-text-dim);font-weight:600;">to</span>
-          <select id="time-end" style="flex:1;padding:12px 14px;border:2px solid var(--gc-border);border-radius:12px;background:rgba(15,23,42,0.8);color:var(--gc-text);font-size:14px;cursor:pointer;">
-            ${generateTimeOptions()}
-          </select>
+        <div style="display:flex;gap:12px;align-items:flex-start;">
+          <div style="flex:1;">
+            <label style="display:block;margin-bottom:6px;font-size:12px;color:var(--gc-text-dim);">Start Time</label>
+            <select id="time-start" size="6" style="width:100%;padding:8px;border:2px solid var(--gc-border);border-radius:12px;background:rgba(15,23,42,0.8);color:var(--gc-text);font-size:14px;cursor:pointer;overflow-y:auto;">
+              ${generateTimeOptions()}
+            </select>
+          </div>
+          <div style="flex:1;">
+            <label style="display:block;margin-bottom:6px;font-size:12px;color:var(--gc-text-dim);">End Time</label>
+            <select id="time-end" size="6" style="width:100%;padding:8px;border:2px solid var(--gc-border);border-radius:12px;background:rgba(15,23,42,0.8);color:var(--gc-text);font-size:14px;cursor:pointer;overflow-y:auto;">
+              ${generateTimeOptions()}
+            </select>
+          </div>
         </div>
-        <p style="margin-top:6px;font-size:12px;color:var(--gc-text-dim);">Select start and end times for the restriction</p>
+        <p style="margin-top:6px;font-size:12px;color:var(--gc-text-dim);">Scroll to select start and end times for the restriction</p>
       </div>
       
       <div style="margin-bottom:24px;">
@@ -1508,37 +1802,95 @@ function loadTabData(tabName) {
 let selectedActivityChild = null;
 
 function setupActivityDashboard() {
-  const childSelect = document.getElementById('activity-child-select');
-  if (childSelect) {
-    childSelect.addEventListener('change', handleActivityChildSelect);
-    
-    // Populate with children
-    populateActivityChildren();
-  }
-  
   const enableBtn = document.getElementById('activity-enable-btn');
   if (enableBtn) enableBtn.addEventListener('click', handleActivityEnableTracking);
   
   const disableBtn = document.getElementById('activity-disable-btn');
   if (disableBtn) disableBtn.addEventListener('click', handleActivityDisableTracking);
+  
+  // Populate with children
+  populateActivityChildren();
 }
 
 async function populateActivityChildren() {
-  const select = document.getElementById('activity-child-select');
-  if (!select) return;
-  
-  select.innerHTML = '<option value="">-- Select a child --</option>';
-  
-  for (const child of children) {
-    const option = document.createElement('option');
-    option.value = child.id;
-    option.textContent = child.username;
-    select.appendChild(option);
-  }
+  activityChildren = [...children];
+  activityChildrenCurrentPage = 1;
+  activityChildrenSearchQuery = '';
+  renderActivityChildren();
 }
 
-async function handleActivityChildSelect(event) {
-  const childId = parseInt(event.target.value);
+function renderActivityChildren() {
+  const listEl = document.getElementById('activity-children-list');
+  const paginationEl = document.getElementById('activity-children-pagination');
+  if (!listEl) return;
+  
+  // Filter children based on search
+  let filteredChildren = activityChildren;
+  if (activityChildrenSearchQuery) {
+    filteredChildren = activityChildren.filter(c =>
+      c.username.toLowerCase().includes(activityChildrenSearchQuery.toLowerCase())
+    );
+  }
+  
+  if (filteredChildren.length === 0) {
+    if (paginationEl) paginationEl.classList.add('hidden');
+    
+    if (activityChildrenSearchQuery) {
+      listEl.innerHTML = `
+        <div style="text-align:center; padding:40px 20px; color:var(--gc-text-dim);">
+          <div style="font-size:48px; margin-bottom:16px; opacity:0.5;">🔍</div>
+          <h3 style="margin-bottom:8px; color:var(--gc-text);">No Children Found</h3>
+          <p style="font-size:14px;">No children match "${escapeHtml(activityChildrenSearchQuery)}"</p>
+        </div>
+      `;
+    } else {
+      listEl.innerHTML = '<p style="color:var(--gc-text-dim);">No children available. Create a child account first.</p>';
+    }
+    return;
+  }
+  
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredChildren.length / ITEMS_PER_PAGE);
+  const startIndex = (activityChildrenCurrentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedChildren = filteredChildren.slice(startIndex, endIndex);
+  
+  // Update pagination controls
+  if (paginationEl && totalPages > 1) {
+    paginationEl.classList.remove('hidden');
+    const prevBtn = document.getElementById('activity-children-prev-btn');
+    const nextBtn = document.getElementById('activity-children-next-btn');
+    const pageInfo = document.getElementById('activity-children-page-info');
+    
+    if (prevBtn) prevBtn.disabled = activityChildrenCurrentPage === 1;
+    if (nextBtn) nextBtn.disabled = activityChildrenCurrentPage === totalPages;
+    if (pageInfo) pageInfo.textContent = `Page ${activityChildrenCurrentPage} of ${totalPages}`;
+  } else if (paginationEl) {
+    paginationEl.classList.add('hidden');
+  }
+  
+  // Render children as clickable cards
+  listEl.innerHTML = `
+    <div class="grid grid-2">
+      ${paginatedChildren.map(child => `
+        <div class="card" style="cursor:pointer;" data-select-child="${child.id}">
+          <h3 class="card-title">${escapeHtml(child.username)}</h3>
+          <span class="badge badge-child">child</span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  
+  // Attach click handlers
+  listEl.querySelectorAll('[data-select-child]').forEach(card => {
+    card.addEventListener('click', (e) => {
+      const childId = parseInt(e.currentTarget.dataset.selectChild);
+      handleActivityChildSelect(childId);
+    });
+  });
+}
+
+async function handleActivityChildSelect(childId) {
   if (!childId) {
     hideActivitySections();
     return;
@@ -1724,7 +2076,10 @@ async function loadActivityDashboard(days = 7) {
     if (dateRangeEl) dateRangeEl.textContent = data.date_range;
     
     console.log("[Activity] Rendering", data.summaries.length, "domain summaries");
-    renderActivityTable(data.summaries);
+    activitySummaries = data.summaries; // Store for filtering/pagination
+    activityCurrentPage = 1; // Reset to first page
+    activitySearchQuery = ''; // Reset search
+    renderActivityTable();
     
   } catch (error) {
     console.error("[Activity] Load dashboard failed:", error);
@@ -1735,22 +2090,63 @@ async function loadActivityDashboard(days = 7) {
   }
 }
 
-function renderActivityTable(summaries) {
+function renderActivityTable() {
   const container = document.getElementById('activity-table-container');
+  const paginationEl = document.getElementById('activity-pagination');
   if (!container) return;
   
-  if (summaries.length === 0) {
-    container.innerHTML = `
-      <div style="text-align:center; padding:40px 20px; color:var(--gc-text-dim);">
-        <div style="font-size:48px; margin-bottom:16px; opacity:0.5;">�</div>
-        <h3 style="margin-bottom:8px; color:var(--gc-text);">No Activity Recorded Yet</h3>
-        <p style="font-size:14px; margin-bottom:20px;">Activity data will appear here once the child starts browsing.</p>
-        <p style="font-size:13px; background:rgba(99,102,241,0.1); padding:12px; border-radius:8px; display:inline-block;">
-          💡 <strong>Tip:</strong> Switch to the child's account and browse some websites to see data populate here.
-        </p>
-      </div>
-    `;
+  // Filter summaries based on search query
+  let filteredSummaries = activitySummaries;
+  if (activitySearchQuery) {
+    filteredSummaries = activitySummaries.filter(summary =>
+      summary.domain.toLowerCase().includes(activitySearchQuery.toLowerCase())
+    );
+  }
+  
+  if (filteredSummaries.length === 0) {
+    if (paginationEl) paginationEl.classList.add('hidden');
+    
+    if (activitySearchQuery) {
+      container.innerHTML = `
+        <div style="text-align:center; padding:40px 20px; color:var(--gc-text-dim);">
+          <div style="font-size:48px; margin-bottom:16px; opacity:0.5;">🔍</div>
+          <h3 style="margin-bottom:8px; color:var(--gc-text);">No Domains Found</h3>
+          <p style="font-size:14px;">No domains match "${escapeHtml(activitySearchQuery)}"</p>
+        </div>
+      `;
+    } else {
+      container.innerHTML = `
+        <div style="text-align:center; padding:40px 20px; color:var(--gc-text-dim);">
+          <div style="font-size:48px; margin-bottom:16px; opacity:0.5;">📭</div>
+          <h3 style="margin-bottom:8px; color:var(--gc-text);">No Activity Recorded Yet</h3>
+          <p style="font-size:14px; margin-bottom:20px;">Activity data will appear here once the child starts browsing.</p>
+          <p style="font-size:13px; background:rgba(99,102,241,0.1); padding:12px; border-radius:8px; display:inline-block;">
+            💡 <strong>Tip:</strong> Switch to the child's account and browse some websites to see data populate here.
+          </p>
+        </div>
+      `;
+    }
     return;
+  }
+  
+  // Calculate pagination
+  const totalPages = Math.ceil(filteredSummaries.length / ITEMS_PER_PAGE);
+  const startIndex = (activityCurrentPage - 1) * ITEMS_PER_PAGE;
+  const endIndex = startIndex + ITEMS_PER_PAGE;
+  const paginatedSummaries = filteredSummaries.slice(startIndex, endIndex);
+  
+  // Update pagination controls
+  if (paginationEl && totalPages > 1) {
+    paginationEl.classList.remove('hidden');
+    const prevBtn = document.getElementById('activity-prev-btn');
+    const nextBtn = document.getElementById('activity-next-btn');
+    const pageInfo = document.getElementById('activity-page-info');
+    
+    if (prevBtn) prevBtn.disabled = activityCurrentPage === 1;
+    if (nextBtn) nextBtn.disabled = activityCurrentPage === totalPages;
+    if (pageInfo) pageInfo.textContent = `Page ${activityCurrentPage} of ${totalPages}`;
+  } else if (paginationEl) {
+    paginationEl.classList.add('hidden');
   }
   
   let html = `
@@ -1770,7 +2166,7 @@ function renderActivityTable(summaries) {
       <tbody>
   `;
   
-  for (const summary of summaries) {
+  for (const summary of paginatedSummaries) {
     const hours = Math.floor(summary.total_time_minutes / 60);
     const minutes = summary.total_time_minutes % 60;
     const timeStr = hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
@@ -1969,6 +2365,264 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   // Activity Dashboard listeners
   setupActivityDashboard();
+  
+  // Activity children search and pagination
+  const activityChildrenSearch = document.getElementById('activity-children-search');
+  if (activityChildrenSearch) {
+    activityChildrenSearch.addEventListener('input', (e) => {
+      activityChildrenSearchQuery = e.target.value;
+      activityChildrenCurrentPage = 1;
+      renderActivityChildren();
+    });
+  }
+  
+  const activityChildrenPrevBtn = document.getElementById('activity-children-prev-btn');
+  if (activityChildrenPrevBtn) {
+    activityChildrenPrevBtn.addEventListener('click', () => {
+      if (activityChildrenCurrentPage > 1) {
+        activityChildrenCurrentPage--;
+        renderActivityChildren();
+      }
+    });
+  }
+  
+  const activityChildrenNextBtn = document.getElementById('activity-children-next-btn');
+  if (activityChildrenNextBtn) {
+    activityChildrenNextBtn.addEventListener('click', () => {
+      const filteredChildren = activityChildrenSearchQuery
+        ? activityChildren.filter(c => c.username.toLowerCase().includes(activityChildrenSearchQuery.toLowerCase()))
+        : activityChildren;
+      const totalPages = Math.ceil(filteredChildren.length / ITEMS_PER_PAGE);
+      if (activityChildrenCurrentPage < totalPages) {
+        activityChildrenCurrentPage++;
+        renderActivityChildren();
+      }
+    });
+  }
+  
+  // Activity search and pagination
+  const activitySearch = document.getElementById('activity-search');
+  if (activitySearch) {
+    activitySearch.addEventListener('input', (e) => {
+      activitySearchQuery = e.target.value;
+      activityCurrentPage = 1; // Reset to first page
+      renderActivityTable();
+    });
+  }
+  
+  const activityPrevBtn = document.getElementById('activity-prev-btn');
+  if (activityPrevBtn) {
+    activityPrevBtn.addEventListener('click', () => {
+      if (activityCurrentPage > 1) {
+        activityCurrentPage--;
+        renderActivityTable();
+      }
+    });
+  }
+  
+  const activityNextBtn = document.getElementById('activity-next-btn');
+  if (activityNextBtn) {
+    activityNextBtn.addEventListener('click', () => {
+      const filteredSummaries = activitySearchQuery
+        ? activitySummaries.filter(s => s.domain.toLowerCase().includes(activitySearchQuery.toLowerCase()))
+        : activitySummaries;
+      const totalPages = Math.ceil(filteredSummaries.length / ITEMS_PER_PAGE);
+      if (activityCurrentPage < totalPages) {
+        activityCurrentPage++;
+        renderActivityTable();
+      }
+    });
+  }
+  
+  // Children search and pagination
+  const childrenSearch = document.getElementById('children-search');
+  if (childrenSearch) {
+    childrenSearch.addEventListener('input', (e) => {
+      childrenSearchQuery = e.target.value;
+      childrenCurrentPage = 1; // Reset to first page
+      displayChildren();
+    });
+  }
+  
+  const childrenPrevBtn = document.getElementById('children-prev-btn');
+  if (childrenPrevBtn) {
+    childrenPrevBtn.addEventListener('click', () => {
+      if (childrenCurrentPage > 1) {
+        childrenCurrentPage--;
+        displayChildren();
+      }
+    });
+  }
+  
+  const childrenNextBtn = document.getElementById('children-next-btn');
+  if (childrenNextBtn) {
+    childrenNextBtn.addEventListener('click', () => {
+      const filteredChildren = childrenSearchQuery 
+        ? children.filter(c => c.username.toLowerCase().includes(childrenSearchQuery.toLowerCase()))
+        : children;
+      const totalPages = Math.ceil(filteredChildren.length / ITEMS_PER_PAGE);
+      if (childrenCurrentPage < totalPages) {
+        childrenCurrentPage++;
+        displayChildren();
+      }
+    });
+  }
+  
+  // Groups search and pagination
+  const groupsSearch = document.getElementById('groups-search');
+  if (groupsSearch) {
+    groupsSearch.addEventListener('input', (e) => {
+      groupsSearchQuery = e.target.value;
+      groupsCurrentPage = 1; // Reset to first page
+      displayGroups();
+    });
+  }
+  
+  const groupsPrevBtn = document.getElementById('groups-prev-btn');
+  if (groupsPrevBtn) {
+    groupsPrevBtn.addEventListener('click', () => {
+      if (groupsCurrentPage > 1) {
+        groupsCurrentPage--;
+        displayGroups();
+      }
+    });
+  }
+  
+  const groupsNextBtn = document.getElementById('groups-next-btn');
+  if (groupsNextBtn) {
+    groupsNextBtn.addEventListener('click', () => {
+      const filteredGroups = groupsSearchQuery 
+        ? groups.filter(g => g.name.toLowerCase().includes(groupsSearchQuery.toLowerCase()))
+        : groups;
+      const totalPages = Math.ceil(filteredGroups.length / ITEMS_PER_PAGE);
+      if (groupsCurrentPage < totalPages) {
+        groupsCurrentPage++;
+        displayGroups();
+      }
+    });
+  }
+  
+  // Rules filter buttons
+  const rulesFilterAll = document.getElementById('rules-filter-all');
+  const rulesFilterChildren = document.getElementById('rules-filter-children');
+  const rulesFilterGroups = document.getElementById('rules-filter-groups');
+  
+  if (rulesFilterAll) {
+    rulesFilterAll.addEventListener('click', () => {
+      rulesTargetsFilter = 'all';
+      rulesTargetsCurrentPage = 1;
+      // Update button styles
+      rulesFilterAll.classList.remove('btn-secondary');
+      rulesFilterAll.classList.add('btn');
+      rulesFilterChildren.classList.remove('btn');
+      rulesFilterChildren.classList.add('btn-secondary');
+      rulesFilterGroups.classList.remove('btn');
+      rulesFilterGroups.classList.add('btn-secondary');
+      renderRulesTargets();
+    });
+  }
+  
+  if (rulesFilterChildren) {
+    rulesFilterChildren.addEventListener('click', () => {
+      rulesTargetsFilter = 'child';
+      rulesTargetsCurrentPage = 1;
+      // Update button styles
+      rulesFilterAll.classList.remove('btn');
+      rulesFilterAll.classList.add('btn-secondary');
+      rulesFilterChildren.classList.remove('btn-secondary');
+      rulesFilterChildren.classList.add('btn');
+      rulesFilterGroups.classList.remove('btn');
+      rulesFilterGroups.classList.add('btn-secondary');
+      renderRulesTargets();
+    });
+  }
+  
+  if (rulesFilterGroups) {
+    rulesFilterGroups.addEventListener('click', () => {
+      rulesTargetsFilter = 'group';
+      rulesTargetsCurrentPage = 1;
+      // Update button styles
+      rulesFilterAll.classList.remove('btn');
+      rulesFilterAll.classList.add('btn-secondary');
+      rulesFilterChildren.classList.remove('btn');
+      rulesFilterChildren.classList.add('btn-secondary');
+      rulesFilterGroups.classList.remove('btn-secondary');
+      rulesFilterGroups.classList.add('btn');
+      renderRulesTargets();
+    });
+  }
+  
+  // Rules targets search and pagination
+  const rulesTargetsSearch = document.getElementById('rules-targets-search');
+  if (rulesTargetsSearch) {
+    rulesTargetsSearch.addEventListener('input', (e) => {
+      rulesTargetsSearchQuery = e.target.value;
+      rulesTargetsCurrentPage = 1;
+      renderRulesTargets();
+    });
+  }
+  
+  const rulesTargetsPrevBtn = document.getElementById('rules-targets-prev-btn');
+  if (rulesTargetsPrevBtn) {
+    rulesTargetsPrevBtn.addEventListener('click', () => {
+      if (rulesTargetsCurrentPage > 1) {
+        rulesTargetsCurrentPage--;
+        renderRulesTargets();
+      }
+    });
+  }
+  
+  const rulesTargetsNextBtn = document.getElementById('rules-targets-next-btn');
+  if (rulesTargetsNextBtn) {
+    rulesTargetsNextBtn.addEventListener('click', () => {
+      const filteredTargets = rulesTargetsSearchQuery
+        ? rulesTargets.filter(t => t.name.toLowerCase().includes(rulesTargetsSearchQuery.toLowerCase()))
+        : rulesTargets;
+      const totalPages = Math.ceil(filteredTargets.length / ITEMS_PER_PAGE);
+      if (rulesTargetsCurrentPage < totalPages) {
+        rulesTargetsCurrentPage++;
+        renderRulesTargets();
+      }
+    });
+  }
+  
+  // Rules list search and pagination
+  const rulesListSearch = document.getElementById('rules-list-search');
+  if (rulesListSearch) {
+    rulesListSearch.addEventListener('input', (e) => {
+      rulesListSearchQuery = e.target.value;
+      rulesListCurrentPage = 1;
+      displayRules();
+    });
+  }
+  
+  const rulesListPrevBtn = document.getElementById('rules-list-prev-btn');
+  if (rulesListPrevBtn) {
+    rulesListPrevBtn.addEventListener('click', () => {
+      if (rulesListCurrentPage > 1) {
+        rulesListCurrentPage--;
+        displayRules();
+      }
+    });
+  }
+  
+  const rulesListNextBtn = document.getElementById('rules-list-next-btn');
+  if (rulesListNextBtn) {
+    rulesListNextBtn.addEventListener('click', () => {
+      const filteredRules = rulesListSearchQuery
+        ? currentRules.filter(r =>
+            r.pattern.toLowerCase().includes(rulesListSearchQuery.toLowerCase()) ||
+            (r.explanation && r.explanation.toLowerCase().includes(rulesListSearchQuery.toLowerCase())) ||
+            r.rule_type.toLowerCase().includes(rulesListSearchQuery.toLowerCase())
+          )
+        : currentRules;
+      const totalPages = Math.ceil(filteredRules.length / ITEMS_PER_PAGE);
+      if (rulesListCurrentPage < totalPages) {
+        rulesListCurrentPage++;
+        displayRules();
+      }
+    });
+  }
   
   loadProfile();
   loadChildren();

@@ -250,12 +250,15 @@ See `ACTIVITY-DASHBOARD-TEST-GUIDE.md` for detailed testing procedures.
 4. **Review security** (penetration testing)
 5. **Update main README** (document new feature)
 
-### Short-term Enhancements
-1. Export functionality (CSV/JSON)
-2. Activity charts and trends
-3. Search and filtering in dashboard
-4. Category-based insights
-5. Email summaries
+### Short-term Enhancements (✅ COMPLETED)
+1. ✅ Search and filtering in dashboard - **IMPLEMENTED**
+2. ✅ Pagination for large datasets - **IMPLEMENTED**
+3. ✅ Filter buttons for rules (Children/Groups) - **IMPLEMENTED**
+4. ✅ Card-based selectors (no scrollable dropdowns) - **IMPLEMENTED**
+5. Export functionality (CSV/JSON) - Pending
+6. Activity charts and trends - Pending
+7. Category-based insights - Pending
+8. Email summaries - Pending
 
 ### Long-term Considerations
 1. Multi-device sync
@@ -279,6 +282,115 @@ See `ACTIVITY-DASHBOARD-TEST-GUIDE.md` for detailed testing procedures.
 3. **CSP violations**: Removed inline event handlers (`onclick`, `onmouseover`) and replaced with proper `addEventListener` 
 4. **Button functionality**: Fixed Block/Allow buttons by using data attributes and event delegation
 5. **Docker volume caching**: Rebuilt backend image to ensure code changes were deployed to container
+
+### UX Improvements Applied (Phase 6.5)
+
+#### 1. **Search & Pagination System** ✅
+Implemented comprehensive search and pagination across all major sections:
+
+**Children Tab**:
+- Search by username
+- 5 children per page
+- Previous/Next navigation
+- Page indicator (e.g., "Page 1 of 3")
+
+**Groups Tab**:
+- Search by group name
+- 5 groups per page
+- Previous/Next navigation
+- Page indicator
+
+**Rules Tab - Targets Selection**:
+- Filter buttons: All | Children Only | Groups Only
+- Search by name (works with filters)
+- 5 targets per page
+- Previous/Next navigation
+- Mutually exclusive filter selection
+
+**Rules Tab - Rules List**:
+- Search by pattern, explanation, or rule type
+- 5 rules per page
+- Previous/Next navigation
+- Page indicator
+
+**Activity Tab - Child Selector**:
+- Card-based selector (replaced dropdown)
+- Search by child name
+- 5 children per page
+- Previous/Next navigation
+- No more scrollable dropdown issues
+
+**Activity Tab - Domain List**:
+- Search by domain name
+- 5 domains per page
+- Previous/Next navigation
+- Page indicator
+
+#### 2. **Time Picker Fix** ✅
+- Changed from full-screen dropdown to scrollable list
+- Uses `size="6"` attribute to show 6 options at once
+- Side-by-side layout for Start/End times
+- Scrolls within container, doesn't affect page scroll
+- Better UX for selecting time ranges
+
+#### 3. **Overscroll Fix** ✅
+- Added `overscroll-behavior: none` to all HTML pages
+- Set background color to match app theme
+- Prevents white space on rubber-band scroll (Mac)
+- Applied to `options.html` and `login.html`
+
+#### 4. **Password Reset Improvement** ✅
+- Removed PIN field from "Forgot Password" form
+- Created separate `/auth/reset-password-only` endpoint
+- PIN reset handled separately through "Forgot PIN" option
+- Recovery codes still work (one-time use)
+- Clearer UX - users can reset password without changing PIN
+
+#### 5. **Manage Members Modal** ✅
+- Shows current members with Remove buttons
+- Shows available children with Add buttons
+- Simple list format (groups typically small)
+- No pagination needed for typical use cases
+
+### Technical Implementation Details
+
+**Pagination State Management**:
+```javascript
+// Global state variables
+const ITEMS_PER_PAGE = 5;
+let childrenCurrentPage = 1;
+let childrenSearchQuery = '';
+let groupsCurrentPage = 1;
+let groupsSearchQuery = '';
+let rulesTargetsCurrentPage = 1;
+let rulesTargetsSearchQuery = '';
+let rulesTargetsFilter = 'all'; // 'all', 'child', 'group'
+let activityCurrentPage = 1;
+let activitySearchQuery = '';
+let activityChildrenCurrentPage = 1;
+let activityChildrenSearchQuery = '';
+```
+
+**Render Functions**:
+- `displayChildren()` - Filters and paginates children
+- `displayGroups()` - Filters and paginates groups
+- `renderRulesTargets()` - Filters (by type), searches, and paginates
+- `displayRules()` - Searches and paginates rules
+- `renderActivityChildren()` - Card-based child selector with search/pagination
+- `renderActivityTable()` - Domain list with search/pagination
+
+**Event Listeners**:
+- Search inputs trigger real-time filtering
+- Previous/Next buttons navigate pages
+- Filter buttons update active state and re-render
+- All pagination resets to page 1 on search/filter change
+
+**Consistent UX**:
+- All sections use same 5-items-per-page limit
+- Consistent button styling (Primary/Secondary)
+- Unified search bar design
+- Standard pagination controls layout
+- Card-based selectors for better visual hierarchy
 
 ## Compliance Checklist
 

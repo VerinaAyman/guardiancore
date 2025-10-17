@@ -1075,6 +1075,15 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=6)
 
 
+class ChangePINRequest(BaseModel):
+    current_pin: str = Field(min_length=4, max_length=6, pattern=r'^\d{4,6}$')
+    new_pin: str = Field(min_length=4, max_length=6, pattern=r'^\d{4,6}$')
+
+
+class SetPINRequest(BaseModel):
+    pin: str = Field(min_length=4, max_length=6, pattern=r'^\d{4,6}$')
+
+
 @router.patch("/profile")
 async def update_profile(data: ProfileUpdate, current_user: dict = Depends(get_current_user)):
     """Update current user's profile."""
@@ -1157,4 +1166,209 @@ async def change_password(data: ChangePasswordRequest, current_user: dict = Depe
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to change password"
+        )
+
+
+@router.post("/pin/set")
+async def set_pin(data: SetPINRequest, current_user: dict = Depends(require_parent)):
+    """Set PIN for the first time and generate recovery codes."""
+    try:
+        import secrets
+        import string
+        
+        async with async_session() as session:
+            # Get user
+            result = await session.execute(
+                select(users).where(users.c.id == current_user["user_id"])
+            )
+            user = result.fetchone()
+            
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            # Generate 10 recovery codes
+            recovery_codes = []
+            for _ in range(10):
+                code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+                recovery_codes.append(code)
+            
+            # Update profile_data
+            profile_data = user.profile_data or {}
+            profile_data['pin'] = data.pin
+            profile_data['recovery_codes'] = recovery_codes
+            
+            await session.execute(
+                update(users).where(
+                    users.c.id == current_user["user_id"]
+                ).values(
+                    profile_data=profile_data,
+                    updated_at=datetime.utcnow()
+                )
+            )
+            await session.commit()
+            
+            return {
+                "message": "PIN set successfully",
+                "recovery_codes": recovery_codes
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to set PIN")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to set PIN"
+        )
+
+
+@router.post("/pin/change")
+async def change_pin(data: ChangePINRequest, current_user: dict = Depends(require_parent)):
+    """Change PIN (requires current PIN)."""
+    try:
+        async with async_session() as session:
+            # Get user
+            result = await session.execute(
+                select(users).where(users.c.id == current_user["user_id"])
+            )
+            user = result.fetchone()
+            
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            # Get current PIN from profile_data
+            profile_data = user.profile_data or {}
+            current_pin = profile_data.get('pin')
+            
+            if not current_pin:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No PIN set. Please set a PIN first."
+                )
+            
+            # Verify current PIN
+            if data.current_pin != current_pin:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Current PIN is incorrect"
+                )
+            
+            # Update PIN
+            profile_data['pin'] = data.new_pin
+            
+            await session.execute(
+                update(users).where(
+                    users.c.id == current_user["user_id"]
+                ).values(
+                    profile_data=profile_data,
+                    updated_at=datetime.utcnow()
+                )
+            )
+            await session.commit()
+            
+            return {"message": "PIN changed successfully"}
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to change PIN")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to change PIN"
+        )
+
+
+@router.get("/recovery-codes")
+async def get_recovery_codes(current_user: dict = Depends(require_parent)):
+    """Get current recovery codes."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(users).where(users.c.id == current_user["user_id"])
+            )
+            user = result.fetchone()
+            
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            profile_data = user.profile_data or {}
+            recovery_codes = profile_data.get('recovery_codes', [])
+            pin = profile_data.get('pin')
+            
+            return {
+                "recovery_codes": recovery_codes,
+                "has_pin": bool(pin),
+                "count": len(recovery_codes)
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to get recovery codes")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get recovery codes"
+        )
+
+
+@router.post("/recovery-codes/regenerate")
+async def regenerate_recovery_codes(current_user: dict = Depends(require_parent)):
+    """Regenerate recovery codes (invalidates old ones)."""
+    try:
+        import secrets
+        import string
+        
+        async with async_session() as session:
+            result = await session.execute(
+                select(users).where(users.c.id == current_user["user_id"])
+            )
+            user = result.fetchone()
+            
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            # Generate 10 new recovery codes
+            recovery_codes = []
+            for _ in range(10):
+                code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
+                recovery_codes.append(code)
+            
+            # Update profile_data
+            profile_data = user.profile_data or {}
+            profile_data['recovery_codes'] = recovery_codes
+            
+            await session.execute(
+                update(users).where(
+                    users.c.id == current_user["user_id"]
+                ).values(
+                    profile_data=profile_data,
+                    updated_at=datetime.utcnow()
+                )
+            )
+            await session.commit()
+            
+            return {
+                "message": "Recovery codes regenerated successfully",
+                "recovery_codes": recovery_codes
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to regenerate recovery codes")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to regenerate recovery codes"
         )

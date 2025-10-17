@@ -43,6 +43,19 @@ class ChildLogin(BaseModel):
     access_code: str = Field(min_length=6, max_length=6)
 
 
+class RecoveryReset(BaseModel):
+    email: EmailStr
+    recovery_code: str = Field(min_length=1, max_length=20)
+    new_password: str = Field(min_length=8, max_length=100)
+    new_pin: str = Field(min_length=4, max_length=6, pattern=r'^\d{4,6}$')
+
+
+class PasswordOnlyReset(BaseModel):
+    email: EmailStr
+    recovery_code: str = Field(min_length=1, max_length=20)
+    new_password: str = Field(min_length=8, max_length=100)
+
+
 class AuthResponse(BaseModel):
     token: str
     user_id: int
@@ -285,3 +298,156 @@ async def logout(current_user: dict = Depends(get_current_user)):
     # JWT tokens are stateless, so we just acknowledge the logout
     # Client should remove the token from storage
     return {"message": "Logged out successfully"}
+
+
+@router.post("/reset-with-recovery")
+async def reset_with_recovery_code(data: RecoveryReset):
+    """Reset password and PIN using a recovery code."""
+    try:
+        async with async_session() as session:
+            # Find user by email
+            result = await session.execute(
+                select(users).where(
+                    users.c.email == data.email,
+                    users.c.account_type == "parent"
+                )
+            )
+            user = result.fetchone()
+            
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            # Get recovery codes from profile_data
+            profile_data = user.profile_data or {}
+            recovery_codes = profile_data.get('recovery_codes', [])
+            
+            if not recovery_codes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No recovery codes found for this account"
+                )
+            
+            # Check if recovery code is valid
+            if data.recovery_code.upper() not in [code.upper() for code in recovery_codes]:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid recovery code"
+                )
+            
+            # Hash new password
+            new_password_hash = bcrypt.hash(data.new_password)
+            
+            # Remove used recovery code
+            recovery_codes = [code for code in recovery_codes if code.upper() != data.recovery_code.upper()]
+            
+            # Update profile_data with new PIN and remaining recovery codes
+            updated_profile_data = profile_data.copy()
+            updated_profile_data['pin'] = data.new_pin
+            updated_profile_data['recovery_codes'] = recovery_codes
+            
+            # Update user password and profile_data
+            from sqlalchemy import update
+            await session.execute(
+                update(users).where(
+                    users.c.id == user.id
+                ).values(
+                    password_hash=new_password_hash,
+                    profile_data=updated_profile_data
+                )
+            )
+            await session.commit()
+            
+            logger.info(f"Password and PIN reset for user {user.id} using recovery code")
+            
+            return {
+                "message": "Password and PIN reset successfully",
+                "remaining_codes": len(recovery_codes)
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to reset with recovery code")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset password and PIN"
+        )
+
+
+@router.post("/reset-password-only")
+async def reset_password_only(data: PasswordOnlyReset):
+    """Reset password only using a recovery code (PIN unchanged)."""
+    try:
+        async with async_session() as session:
+            # Find user by email
+            result = await session.execute(
+                select(users).where(
+                    users.c.email == data.email,
+                    users.c.account_type == "parent"
+                )
+            )
+            user = result.fetchone()
+            
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            # Get recovery codes from profile_data
+            profile_data = user.profile_data or {}
+            recovery_codes = profile_data.get('recovery_codes', [])
+            
+            if not recovery_codes:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="No recovery codes found for this account"
+                )
+            
+            # Check if recovery code is valid
+            if data.recovery_code.upper() not in [code.upper() for code in recovery_codes]:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid recovery code"
+                )
+            
+            # Hash new password
+            new_password_hash = bcrypt.hash(data.new_password)
+            
+            # Remove used recovery code
+            recovery_codes = [code for code in recovery_codes if code.upper() != data.recovery_code.upper()]
+            
+            # Update profile_data with remaining recovery codes (PIN unchanged)
+            updated_profile_data = profile_data.copy()
+            updated_profile_data['recovery_codes'] = recovery_codes
+            
+            # Update user password and profile_data
+            from sqlalchemy import update
+            await session.execute(
+                update(users).where(
+                    users.c.id == user.id
+                ).values(
+                    password_hash=new_password_hash,
+                    profile_data=updated_profile_data
+                )
+            )
+            await session.commit()
+            
+            logger.info(f"Password reset for user {user.id} using recovery code (PIN unchanged)")
+            
+            return {
+                "message": "Password reset successfully",
+                "remaining_codes": len(recovery_codes)
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to reset password")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to reset password"
+        )
