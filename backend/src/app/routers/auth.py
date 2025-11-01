@@ -112,9 +112,12 @@ async def register_parent(data: ParentRegister):
     """Register a new parent account."""
     try:
         async with async_session() as session:
+            # Normalize email to lowercase
+            email_lower = data.email.lower().strip()
+            
             # Check if email already exists
             existing = await session.execute(
-                select(users).where(users.c.email == data.email)
+                select(users).where(func.lower(users.c.email) == email_lower)
             )
             if existing.fetchone():
                 raise HTTPException(
@@ -127,7 +130,7 @@ async def register_parent(data: ParentRegister):
             
             # Create parent user
             stmt = insert(users).values(
-                email=data.email,
+                email=email_lower,
                 password_hash=password_hash,
                 account_type="parent",
                 username=data.username,
@@ -175,10 +178,13 @@ async def login_parent(data: ParentLogin):
     """Login with parent credentials."""
     try:
         async with async_session() as session:
+            # Normalize email to lowercase for case-insensitive lookup
+            email_lower = data.email.lower().strip()
+            
             # Find user by email
             result = await session.execute(
                 select(users).where(
-                    users.c.email == data.email,
+                    func.lower(users.c.email) == email_lower,
                     users.c.account_type == "parent"
                 )
             )

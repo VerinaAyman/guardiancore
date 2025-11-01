@@ -1372,3 +1372,46 @@ async def regenerate_recovery_codes(current_user: dict = Depends(require_parent)
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to regenerate recovery codes"
         )
+
+
+# ========== Gamification ==========
+
+@router.get("/gamification")
+async def get_gamification(current_user: dict = Depends(get_current_user)):
+    """Get current user's XP and level."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(user_gamification).where(
+                    user_gamification.c.user_id == current_user["user_id"]
+                )
+            )
+            gamification = result.fetchone()
+            
+            if not gamification:
+                # Initialize if not exists
+                from datetime import datetime
+                await session.execute(
+                    insert(user_gamification).values(
+                        user_id=current_user["user_id"],
+                        day_key=datetime.utcnow().strftime("%Y-%m-%d"),
+                        xp=0,
+                        level=1
+                    )
+                )
+                await session.commit()
+                return {"xp": 0, "level": 1, "xp_to_next_level": 100}
+            
+            xp_to_next_level = 100  # Fixed 100 XP per level
+            return {
+                "xp": gamification.xp,
+                "level": gamification.level,
+                "xp_to_next_level": xp_to_next_level
+            }
+            
+    except Exception as e:
+        logger.exception("Failed to get gamification")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get gamification data"
+        )
