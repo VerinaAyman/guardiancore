@@ -354,8 +354,8 @@ async function loadSettings() {
     const defaults = {};
     
     if (!gc_backend_url) {
-      defaults.gc_backend_url = 'http://localhost:8000';
-      gc_backend_url = 'http://localhost:8000';
+      defaults.gc_backend_url = 'https://guardiancore.onrender.com';
+      gc_backend_url = 'https://guardiancore.onrender.com';
     }
     
     if (!gc_api_token) {

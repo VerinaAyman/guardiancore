@@ -10,7 +10,7 @@ let recoveryCodes = [];
 let isPINVerified = false;
 
 // Backend URL
-let backendUrl = 'http://localhost:8000';
+let backendUrl = 'https://guardiancore.onrender.com';
 
 // Pagination state
 const ITEMS_PER_PAGE = 5;
@@ -46,8 +46,8 @@ async function checkAuth() {
       const defaults = {};
       
       if (!storage.gc_backend_url) {
-        defaults.gc_backend_url = 'http://localhost:8000';
-        storage.gc_backend_url = 'http://localhost:8000';
+        defaults.gc_backend_url = 'https://guardiancore.onrender.com';
+        storage.gc_backend_url = 'https://guardiancore.onrender.com';
       }
       
       if (!storage.gc_api_token) {

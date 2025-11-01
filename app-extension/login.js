@@ -67,7 +67,7 @@ document.getElementById('parent-login-btn')?.addEventListener('click', async () 
   
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
     
     const response = await fetch(`${backendUrl}/auth/parent/login`, {
       method: 'POST',
@@ -137,7 +137,7 @@ document.getElementById('register-btn')?.addEventListener('click', async () => {
   
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
     
     const response = await fetch(`${backendUrl}/auth/parent/register`, {
       method: 'POST',
@@ -200,7 +200,7 @@ document.getElementById('forgot-password-btn')?.addEventListener('click', async 
   
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
     
     const response = await fetch(`${backendUrl}/auth/reset-password-only`, {
       method: 'POST',
@@ -257,7 +257,7 @@ document.getElementById('child-login-btn')?.addEventListener('click', async () =
   
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
     
     const response = await fetch(`${backendUrl}/auth/child/login`, {
       method: 'POST',

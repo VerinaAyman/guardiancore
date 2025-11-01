@@ -6,7 +6,7 @@ let currentUser = null;
 let childProfile = null;
 
 // Backend URL
-let backendUrl = 'http://localhost:8000';
+let backendUrl = 'https://guardiancore.onrender.com';
 
 // ========== AUTHENTICATION ==========
 
@@ -21,8 +21,8 @@ async function checkAuth() {
       const defaults = {};
       
       if (!storage.gc_backend_url) {
-        defaults.gc_backend_url = 'http://localhost:8000';
-        storage.gc_backend_url = 'http://localhost:8000';
+        defaults.gc_backend_url = 'https://guardiancore.onrender.com';
+        storage.gc_backend_url = 'https://guardiancore.onrender.com';
       }
       
       if (!storage.gc_api_token) {

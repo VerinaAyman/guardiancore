@@ -17,8 +17,8 @@ async function ensureDefaultConfig() {
       const defaults = {};
       
       if (!gc_backend_url) {
-        defaults.gc_backend_url = 'http://localhost:8000';
-        console.log("[Config] Auto-configured backend URL: http://localhost:8000");
+        defaults.gc_backend_url = 'https://guardiancore.onrender.com';
+        console.log("[Config] Auto-configured backend URL: https://guardiancore.onrender.com");
       }
       
       if (!gc_api_token) {
@@ -69,7 +69,7 @@ async function initializeAuth() {
   // Verify token is still valid
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
     
     const response = await fetch(`${backendUrl}/auth/verify`, {
       method: 'POST',
@@ -288,7 +288,7 @@ async function captureActivityEvent(eventType, domain, additionalData = {}) {
     }
     
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
     
     const eventData = {
       domain: domain,
@@ -417,7 +417,7 @@ let rulesCache = {
 async function loadChildRules(childId, token) {
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
     
     // Use the combined endpoint to get both child rules and group rules
     const url = `${backendUrl}/accounts/rules/combined/child/${childId}`;
