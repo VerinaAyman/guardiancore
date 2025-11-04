@@ -567,17 +567,20 @@ function evaluateTimeWindows(url) {
     if (domainAllowWindows.some(w => w.inWindow)) {
       return { allowed: true, reason: 'Allowed (scheduled allow window)' };
     }
-    return { blocked: true, rule: domainAllowWindows[0].rule, reason: 'Outside allowed time window' };
+    const rule = domainAllowWindows[0].rule;
+    return { blocked: true, rule: rule, reason: rule.explanation || 'Outside allowed time window' };
   }
 
   // Domain block semantics
   if (domainBlockWindows.some(w => w.inWindow)) {
-    return { blocked: true, rule: domainBlockWindows.find(w => w.inWindow).rule, reason: 'Blocked during scheduled window' };
+    const rule = domainBlockWindows.find(w => w.inWindow).rule;
+    return { blocked: true, rule: rule, reason: rule.explanation || 'Blocked during scheduled window' };
   }
 
   // Global block semantics
   if (globalBlockWindows.some(w => w.inWindow)) {
-    return { blocked: true, rule: globalBlockWindows.find(w => w.inWindow).rule, reason: 'Blocked (global time window)' };
+    const rule = globalBlockWindows.find(w => w.inWindow).rule;
+    return { blocked: true, rule: rule, reason: rule.explanation || 'Blocked (global time window)' };
   }
 
   return { allowed: true };
