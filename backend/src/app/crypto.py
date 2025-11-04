@@ -6,7 +6,7 @@ Uses Fernet (symmetric encryption) with a key derived from the SECRET_KEY.
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.backends import default_backend
 import base64
 import json
@@ -20,7 +20,7 @@ def _get_encryption_key() -> bytes:
     # In production, you'd want to store the salt securely
     salt = b'GuardianCore-Salt-v1'
     
-    kdf = PBKDF2(
+    kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
