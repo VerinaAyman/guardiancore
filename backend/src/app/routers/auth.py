@@ -18,6 +18,7 @@ import jwt
 from datetime import datetime, timedelta
 import secrets
 import logging
+from ..crypto import encrypt_pin, decrypt_pin, encrypt_recovery_codes, decrypt_recovery_codes
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 logger = logging.getLogger(__name__)
@@ -326,15 +327,18 @@ async def reset_with_recovery_code(data: RecoveryReset):
                     detail="User not found"
                 )
             
-            # Get recovery codes from profile_data
+            # Get recovery codes from profile_data and decrypt them
             profile_data = user.profile_data or {}
-            recovery_codes = profile_data.get('recovery_codes', [])
+            encrypted_codes = profile_data.get('recovery_codes', [])
             
-            if not recovery_codes:
+            if not encrypted_codes:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No recovery codes found for this account"
                 )
+            
+            # Decrypt recovery codes
+            recovery_codes = decrypt_recovery_codes(encrypted_codes)
             
             # Check if recovery code is valid
             if data.recovery_code.upper() not in [code.upper() for code in recovery_codes]:
@@ -349,10 +353,10 @@ async def reset_with_recovery_code(data: RecoveryReset):
             # Remove used recovery code
             recovery_codes = [code for code in recovery_codes if code.upper() != data.recovery_code.upper()]
             
-            # Update profile_data with new PIN and remaining recovery codes
+            # Update profile_data with new PIN and remaining recovery codes (encrypted)
             updated_profile_data = profile_data.copy()
-            updated_profile_data['pin'] = data.new_pin
-            updated_profile_data['recovery_codes'] = recovery_codes
+            updated_profile_data['pin'] = encrypt_pin(data.new_pin)
+            updated_profile_data['recovery_codes'] = encrypt_recovery_codes(recovery_codes)
             
             # Update user password and profile_data
             from sqlalchemy import update
@@ -403,15 +407,18 @@ async def reset_password_only(data: PasswordOnlyReset):
                     detail="User not found"
                 )
             
-            # Get recovery codes from profile_data
+            # Get recovery codes from profile_data and decrypt them
             profile_data = user.profile_data or {}
-            recovery_codes = profile_data.get('recovery_codes', [])
+            encrypted_codes = profile_data.get('recovery_codes', [])
             
-            if not recovery_codes:
+            if not encrypted_codes:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No recovery codes found for this account"
                 )
+            
+            # Decrypt recovery codes
+            recovery_codes = decrypt_recovery_codes(encrypted_codes)
             
             # Check if recovery code is valid
             if data.recovery_code.upper() not in [code.upper() for code in recovery_codes]:
@@ -426,9 +433,9 @@ async def reset_password_only(data: PasswordOnlyReset):
             # Remove used recovery code
             recovery_codes = [code for code in recovery_codes if code.upper() != data.recovery_code.upper()]
             
-            # Update profile_data with remaining recovery codes (PIN unchanged)
+            # Update profile_data with remaining recovery codes (PIN unchanged, encrypt codes)
             updated_profile_data = profile_data.copy()
-            updated_profile_data['recovery_codes'] = recovery_codes
+            updated_profile_data['recovery_codes'] = encrypt_recovery_codes(recovery_codes)
             
             # Update user password and profile_data
             from sqlalchemy import update

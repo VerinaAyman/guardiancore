@@ -17,6 +17,7 @@ from ..routers.auth import get_current_user, generate_child_code
 from passlib.hash import bcrypt
 from datetime import datetime
 import logging
+from ..crypto import encrypt_pin, decrypt_pin, encrypt_recovery_codes, decrypt_recovery_codes, migrate_profile_data
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 logger = logging.getLogger(__name__)
@@ -1195,10 +1196,10 @@ async def set_pin(data: SetPINRequest, current_user: dict = Depends(require_pare
                 code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
                 recovery_codes.append(code)
             
-            # Update profile_data
+            # Update profile_data with ENCRYPTED values
             profile_data = user.profile_data or {}
-            profile_data['pin'] = data.pin
-            profile_data['recovery_codes'] = recovery_codes
+            profile_data['pin'] = encrypt_pin(data.pin)  # Encrypt PIN
+            profile_data['recovery_codes'] = encrypt_recovery_codes(recovery_codes)  # Encrypt codes
             
             await session.execute(
                 update(users).where(
@@ -1212,7 +1213,7 @@ async def set_pin(data: SetPINRequest, current_user: dict = Depends(require_pare
             
             return {
                 "message": "PIN set successfully",
-                "recovery_codes": recovery_codes
+                "recovery_codes": recovery_codes  # Return plaintext to user (only time they see them)
             }
             
     except HTTPException:
@@ -1242,25 +1243,26 @@ async def change_pin(data: ChangePINRequest, current_user: dict = Depends(requir
                     detail="User not found"
                 )
             
-            # Get current PIN from profile_data
+            # Get current PIN from profile_data and decrypt it
             profile_data = user.profile_data or {}
-            current_pin = profile_data.get('pin')
+            encrypted_pin = profile_data.get('pin')
             
-            if not current_pin:
+            if not encrypted_pin:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="No PIN set. Please set a PIN first."
                 )
             
-            # Verify current PIN
+            # Decrypt and verify current PIN
+            current_pin = decrypt_pin(encrypted_pin)
             if data.current_pin != current_pin:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Current PIN is incorrect"
                 )
             
-            # Update PIN
-            profile_data['pin'] = data.new_pin
+            # Update PIN (encrypt new PIN)
+            profile_data['pin'] = encrypt_pin(data.new_pin)
             
             await session.execute(
                 update(users).where(
@@ -1301,12 +1303,15 @@ async def get_recovery_codes(current_user: dict = Depends(require_parent)):
                 )
             
             profile_data = user.profile_data or {}
-            recovery_codes = profile_data.get('recovery_codes', [])
-            pin = profile_data.get('pin')
+            encrypted_codes = profile_data.get('recovery_codes', [])
+            encrypted_pin = profile_data.get('pin')
+            
+            # Decrypt recovery codes
+            recovery_codes = decrypt_recovery_codes(encrypted_codes) if encrypted_codes else []
             
             return {
                 "recovery_codes": recovery_codes,
-                "has_pin": bool(pin),
+                "has_pin": bool(encrypted_pin),
                 "count": len(recovery_codes)
             }
             
@@ -1345,9 +1350,9 @@ async def regenerate_recovery_codes(current_user: dict = Depends(require_parent)
                 code = ''.join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(8))
                 recovery_codes.append(code)
             
-            # Update profile_data
+            # Update profile_data with encrypted recovery codes
             profile_data = user.profile_data or {}
-            profile_data['recovery_codes'] = recovery_codes
+            profile_data['recovery_codes'] = encrypt_recovery_codes(recovery_codes)
             
             await session.execute(
                 update(users).where(
