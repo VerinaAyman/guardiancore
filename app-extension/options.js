@@ -924,125 +924,324 @@ async function showGroupMembersModal(groupId) {
     console.error("[Groups] Failed to load members:", error);
   }
   
-  const memberIds = new Set(currentMembers.map(m => m.id));
+  // State management for the modal
+  const modalState = {
+    currentMembers: currentMembers,
+    availableChildren: children,
+    currentPage: 1,
+    availablePage: 1,
+    itemsPerPage: 8,
+    currentSearch: '',
+    availableSearch: ''
+  };
   
   // Create modal
   const modal = document.createElement('div');
   modal.id = 'group-members-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.8);display:flex;align-items:center;justify-content:center;z-index:1000;';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.92);display:flex;align-items:center;justify-content:center;z-index:1000;backdrop-filter:blur(4px);animation:fadeIn 0.2s ease;';
   
-  modal.innerHTML = `
-    <div style="background:var(--gc-panel);border:1px solid var(--gc-border);border-radius:14px;padding:24px;max-width:500px;width:90%;">
-      <h3 style="margin:0 0 16px;font-size:18px;">Manage Members: ${escapeHtml(group.name)}</h3>
-      
-      ${currentMembers.length > 0 ? `
-        <div style="margin-bottom:16px;">
-          <h4 style="margin:0 0 8px;font-size:14px;color:var(--gc-text-dim);">Current Members</h4>
-          <div id="current-members" style="max-height:150px;overflow-y:auto;margin-bottom:16px;">
-            ${currentMembers.map(member => `
-              <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border-bottom:1px solid var(--gc-border);">
-                <span>✓ ${escapeHtml(member.username)}</span>
-                <button class="btn btn-sm" style="background:var(--gc-danger);color:white;" data-remove-member="${groupId}" data-child-id="${member.id}">
-                  Remove
-                </button>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-      ` : ''}
-      
-      <h4 style="margin:0 0 8px;font-size:14px;color:var(--gc-text-dim);">Available Children</h4>
-      <div id="members-selection" style="max-height:200px;overflow-y:auto;margin-bottom:16px;">
-        ${children.filter(child => !memberIds.has(child.id)).map(child => `
-          <div style="display:flex;align-items:center;justify-content:space-between;padding:8px;border-bottom:1px solid var(--gc-border);">
-            <span>${escapeHtml(child.username)}</span>
-            <button class="btn btn-sm" data-add-member="${groupId}" data-child-id="${child.id}">
-              Add
-            </button>
-          </div>
-        `).join('') || '<p style="color:var(--gc-text-dim);font-size:12px;text-align:center;padding:16px;">All children are already members</p>'}
-      </div>
-      <button class="btn btn-secondary" id="close-members-modal">Close</button>
-    </div>
-  `;
-  
+  // Insert into DOM before first render so handlers can bind on first load
   document.body.appendChild(modal);
   
-  // Attach close handler
-  document.getElementById('close-members-modal').addEventListener('click', () => {
-    modal.remove();
-  });
+  // Initial render
+  renderModalContent();
   
-  // Attach add handlers
-  modal.querySelectorAll('[data-add-member]').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const groupId = e.target.dataset.addMember;
-      const childId = e.target.dataset.childId;
-      const button = e.target;
-      
-      try {
-        button.disabled = true;
-        button.textContent = 'Adding...';
+  function renderModalContent() {
+    const memberIds = new Set(modalState.currentMembers.map(m => m.id));
+    const filteredAvailable = modalState.availableChildren.filter(child => 
+      !memberIds.has(child.id) && 
+      child.username.toLowerCase().includes(modalState.availableSearch.toLowerCase())
+    );
+    const filteredCurrent = modalState.currentMembers.filter(member =>
+      member.username.toLowerCase().includes(modalState.currentSearch.toLowerCase())
+    );
+    
+    // Pagination for current members
+    const currentTotalPages = Math.ceil(filteredCurrent.length / modalState.itemsPerPage);
+    const currentStartIdx = (modalState.currentPage - 1) * modalState.itemsPerPage;
+    const currentPageItems = filteredCurrent.slice(currentStartIdx, currentStartIdx + modalState.itemsPerPage);
+    
+    // Pagination for available children
+    const availableTotalPages = Math.ceil(filteredAvailable.length / modalState.itemsPerPage);
+    const availableStartIdx = (modalState.availablePage - 1) * modalState.itemsPerPage;
+    const availablePageItems = filteredAvailable.slice(availableStartIdx, availableStartIdx + modalState.itemsPerPage);
+    
+    modal.innerHTML = `
+      <div style="background:linear-gradient(145deg,#1b2736,#14202c);border:1px solid #2a3a4c;border-radius:16px;padding:0;max-width:900px;width:95%;max-height:90vh;display:flex;flex-direction:column;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);">
+        <!-- Header -->
+        <div style="padding:24px 32px;border-bottom:1px solid var(--gc-border);background:linear-gradient(120deg,#1e293b,#1a2332);border-radius:16px 16px 0 0;">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <div>
+              <h3 style="margin:0 0 4px;font-size:22px;font-weight:650;color:#e2e8f0;">Manage Group Members</h3>
+              <p style="margin:0;font-size:14px;color:var(--gc-text-dim);">Group: <span style="color:var(--gc-accent);font-weight:600;">${escapeHtml(group.name)}</span></p>
+            </div>
+            <button id="close-members-modal" style="background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:white;padding:8px 12px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;transition:0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">
+              ✕ Close
+            </button>
+          </div>
+        </div>
         
-        const response = await fetch(`${backendUrl}/accounts/groups/${groupId}/members`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${currentUser.token}`
-          },
-          body: JSON.stringify({ child_id: parseInt(childId) })
-        });
-        
-        if (!response.ok) throw new Error('Failed to add member');
-        
-        button.textContent = '✓ Added';
-        
-        // Reload modal to show updated members
-        setTimeout(async () => {
-          modal.remove();
-          await loadGroups(); // Refresh group count
-          showGroupMembersModal(groupId);
-        }, 500);
-      } catch (error) {
-        console.error("[Groups] Add member failed:", error);
-        button.disabled = false;
-        button.textContent = 'Add';
-        alert('Failed to add member to group');
-      }
-    });
-  });
+        <!-- Content Grid -->
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:24px 32px;overflow-y:auto;flex:1;">
+          <!-- Current Members Panel -->
+          <div style="display:flex;flex-direction:column;min-height:0;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+              <div style="flex:1;">
+                <h4 style="margin:0;font-size:16px;color:#e2e8f0;font-weight:600;">Current Members</h4>
+                <p style="margin:4px 0 0;font-size:12px;color:var(--gc-text-dim);">${modalState.currentMembers.length} member${modalState.currentMembers.length !== 1 ? 's' : ''}</p>
+              </div>
+            </div>
+            
+            <!-- Search for current members -->
+            <input type="text" id="current-members-search" value="${escapeHtml(modalState.currentSearch)}" placeholder="🔍 Search current members..." style="width:100%;padding:10px 12px;background:#0f1a27;border:1px solid #2a3a50;border-radius:8px;color:var(--gc-text);font-family:inherit;font-size:13px;margin-bottom:12px;">
+            
+            <!-- Members List -->
+            <div style="flex:1;overflow-y:auto;background:#0f1a27;border:1px solid #2a3a50;border-radius:10px;padding:8px;min-height:300px;">
+              ${currentPageItems.length > 0 ? currentPageItems.map(member => `
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:linear-gradient(145deg,#182331,#131c27);border:1px solid #2a3a4c;border-radius:8px;margin-bottom:8px;transition:0.2s;" onmouseover="this.style.borderColor='#3a4a5c'" onmouseout="this.style.borderColor='#2a3a4c'">
+                  <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#10b981,#059669);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:white;">
+                      ${escapeHtml(member.username.charAt(0).toUpperCase())}
+                    </div>
+                    <div>
+                      <div style="font-weight:600;color:#e2e8f0;font-size:14px;">${escapeHtml(member.username)}</div>
+                      <div style="font-size:11px;color:var(--gc-text-dim);">Member</div>
+                    </div>
+                  </div>
+                  <button class="btn btn-sm btn-danger" style="background:rgba(239,68,68,0.2);border:1px solid rgba(239,68,68,0.4);padding:6px 14px;font-size:12px;" data-remove-member="${groupId}" data-child-id="${member.id}">
+                    Remove
+                  </button>
+                </div>
+              `).join('') : `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--gc-text-dim);padding:32px;">
+                  <div style="font-size:48px;margin-bottom:12px;opacity:0.5;">👥</div>
+                  <p style="font-size:14px;text-align:center;">${modalState.currentSearch ? 'No members match your search' : 'No members in this group yet'}</p>
+                </div>
+              `}
+            </div>
+            
+            <!-- Pagination for current members -->
+            ${currentTotalPages > 1 ? `
+              <div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:12px;">
+                <button class="btn btn-sm btn-secondary" id="current-prev-btn" ${modalState.currentPage === 1 ? 'disabled' : ''} style="padding:6px 12px;font-size:12px;">← Prev</button>
+                <span style="color:var(--gc-text-dim);font-size:13px;">Page ${modalState.currentPage} of ${currentTotalPages}</span>
+                <button class="btn btn-sm btn-secondary" id="current-next-btn" ${modalState.currentPage === currentTotalPages ? 'disabled' : ''} style="padding:6px 12px;font-size:12px;">Next →</button>
+              </div>
+            ` : ''}
+          </div>
+          
+          <!-- Available Children Panel -->
+          <div style="display:flex;flex-direction:column;min-height:0;">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+              <div style="flex:1;">
+                <h4 style="margin:0;font-size:16px;color:#e2e8f0;font-weight:600;">Available Children</h4>
+                <p style="margin:4px 0 0;font-size:12px;color:var(--gc-text-dim);">${filteredAvailable.length} available</p>
+              </div>
+            </div>
+            
+            <!-- Search for available children -->
+            <input type="text" id="available-children-search" value="${escapeHtml(modalState.availableSearch)}" placeholder="🔍 Search available children..." style="width:100%;padding:10px 12px;background:#0f1a27;border:1px solid #2a3a50;border-radius:8px;color:var(--gc-text);font-family:inherit;font-size:13px;margin-bottom:12px;">
+            
+            <!-- Children List -->
+            <div style="flex:1;overflow-y:auto;background:#0f1a27;border:1px solid #2a3a50;border-radius:10px;padding:8px;min-height:300px;">
+              ${availablePageItems.length > 0 ? availablePageItems.map(child => `
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:12px;background:linear-gradient(145deg,#182331,#131c27);border:1px solid #2a3a4c;border-radius:8px;margin-bottom:8px;transition:0.2s;" onmouseover="this.style.borderColor='#3a4a5c'" onmouseout="this.style.borderColor='#2a3a4c'">
+                  <div style="display:flex;align-items:center;gap:12px;">
+                    <div style="width:36px;height:36px;border-radius:50%;background:linear-gradient(135deg,#6366f1,#8b5cf6);display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:white;">
+                      ${escapeHtml(child.username.charAt(0).toUpperCase())}
+                    </div>
+                    <div>
+                      <div style="font-weight:600;color:#e2e8f0;font-size:14px;">${escapeHtml(child.username)}</div>
+                      <div style="font-size:11px;color:var(--gc-text-dim);">Not in group</div>
+                    </div>
+                  </div>
+                  <button class="btn btn-sm" style="background:linear-gradient(135deg,#6366f1,#8b5cf6);padding:6px 14px;font-size:12px;" data-add-member="${groupId}" data-child-id="${child.id}">
+                    + Add
+                  </button>
+                </div>
+              `).join('') : `
+                <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--gc-text-dim);padding:32px;">
+                  <div style="font-size:48px;margin-bottom:12px;opacity:0.5;">✓</div>
+                  <p style="font-size:14px;text-align:center;">${modalState.availableSearch ? 'No children match your search' : 'All children are already members'}</p>
+                </div>
+              `}
+            </div>
+            
+            <!-- Pagination for available children -->
+            ${availableTotalPages > 1 ? `
+              <div style="display:flex;justify-content:center;align-items:center;gap:12px;margin-top:12px;">
+                <button class="btn btn-sm btn-secondary" id="available-prev-btn" ${modalState.availablePage === 1 ? 'disabled' : ''} style="padding:6px 12px;font-size:12px;">← Prev</button>
+                <span style="color:var(--gc-text-dim);font-size:13px;">Page ${modalState.availablePage} of ${availableTotalPages}</span>
+                <button class="btn btn-sm btn-secondary" id="available-next-btn" ${modalState.availablePage === availableTotalPages ? 'disabled' : ''} style="padding:6px 12px;font-size:12px;">Next →</button>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+    
+    attachModalHandlers();
+  }
   
-  // Attach remove handlers
-  modal.querySelectorAll('[data-remove-member]').forEach(btn => {
-    btn.addEventListener('click', async (e) => {
-      const groupId = e.target.dataset.removeMember;
-      const childId = e.target.dataset.childId;
-      const button = e.target;
-      
-      if (!confirm('Remove this child from the group?')) return;
-      
-      try {
-        button.disabled = true;
-        button.textContent = 'Removing...';
+  function attachModalHandlers() {
+    // Close handler - must be re-attached after every render
+    const closeBtn = modal.querySelector('#close-members-modal');
+    if (closeBtn) {
+      closeBtn.onclick = () => modal.remove();
+    }
+    
+    // Search handlers
+    const currentSearchInput = modal.querySelector('#current-members-search');
+    if (currentSearchInput) {
+      currentSearchInput.oninput = (e) => {
+        modalState.currentSearch = e.target.value;
+        modalState.currentPage = 1;
+        renderModalContent();
+      };
+    }
+    
+    const availableSearchInput = modal.querySelector('#available-children-search');
+    if (availableSearchInput) {
+      availableSearchInput.oninput = (e) => {
+        modalState.availableSearch = e.target.value;
+        modalState.availablePage = 1;
+        renderModalContent();
+      };
+    }
+    
+    // Pagination handlers for current members
+    const currentPrevBtn = modal.querySelector('#current-prev-btn');
+    if (currentPrevBtn) {
+      currentPrevBtn.onclick = () => {
+        if (modalState.currentPage > 1) {
+          modalState.currentPage--;
+          renderModalContent();
+        }
+      };
+    }
+    
+    const currentNextBtn = modal.querySelector('#current-next-btn');
+    if (currentNextBtn) {
+      currentNextBtn.onclick = () => {
+        modalState.currentPage++;
+        renderModalContent();
+      };
+    }
+    
+    // Pagination handlers for available children
+    const availablePrevBtn = modal.querySelector('#available-prev-btn');
+    if (availablePrevBtn) {
+      availablePrevBtn.onclick = () => {
+        if (modalState.availablePage > 1) {
+          modalState.availablePage--;
+          renderModalContent();
+        }
+      };
+    }
+    
+    const availableNextBtn = modal.querySelector('#available-next-btn');
+    if (availableNextBtn) {
+      availableNextBtn.onclick = () => {
+        modalState.availablePage++;
+        renderModalContent();
+      };
+    }
+    
+    // Add member handlers
+    modal.querySelectorAll('[data-add-member]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const groupId = e.target.dataset.addMember;
+        const childId = e.target.dataset.childId;
+        const button = e.target;
+        const originalText = button.textContent;
         
-        const response = await fetch(`${backendUrl}/accounts/groups/${groupId}/members/${childId}`, {
-          method: 'DELETE',
-          headers: { 'Authorization': `Bearer ${currentUser.token}` }
-        });
-        
-        if (!response.ok) throw new Error('Failed to remove member');
-        
-        // Reload modal to show updated members
-        modal.remove();
-        await loadGroups(); // Refresh group count
-        showGroupMembersModal(groupId);
-      } catch (error) {
-        console.error("[Groups] Remove member failed:", error);
-        button.disabled = false;
-        button.textContent = 'Remove';
-        alert('Failed to remove member from group');
-      }
+        try {
+          button.disabled = true;
+          button.textContent = 'Adding...';
+          
+          const response = await fetch(`${backendUrl}/accounts/groups/${groupId}/members`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${currentUser.token}`
+            },
+            body: JSON.stringify({ child_id: parseInt(childId) })
+          });
+          
+          if (!response.ok) throw new Error('Failed to add member');
+          
+          // Update modal state
+          const child = modalState.availableChildren.find(c => c.id == childId);
+          if (child) {
+            modalState.currentMembers.push(child);
+            modalState.currentPage = 1;
+            modalState.availablePage = 1;
+          }
+          
+          // Reload groups in background
+          loadGroups();
+          
+          // Re-render modal
+          renderModalContent();
+        } catch (error) {
+          console.error("[Groups] Add member failed:", error);
+          button.disabled = false;
+          button.textContent = originalText;
+          alert('Failed to add member to group');
+        }
+      });
     });
+    
+    // Remove member handlers
+    modal.querySelectorAll('[data-remove-member]').forEach(btn => {
+      btn.addEventListener('click', async (e) => {
+        const groupId = e.target.dataset.removeMember;
+        const childId = e.target.dataset.childId;
+        const button = e.target;
+        const originalText = button.textContent;
+        
+        if (!confirm('Remove this child from the group?')) return;
+        
+        try {
+          button.disabled = true;
+          button.textContent = 'Removing...';
+          
+          const response = await fetch(`${backendUrl}/accounts/groups/${groupId}/members/${childId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${currentUser.token}` }
+          });
+          
+          if (!response.ok) throw new Error('Failed to remove member');
+          
+          // Update modal state
+          modalState.currentMembers = modalState.currentMembers.filter(m => m.id != childId);
+          if (modalState.currentPage > 1) {
+            const totalPages = Math.ceil(modalState.currentMembers.length / modalState.itemsPerPage);
+            if (modalState.currentPage > totalPages) {
+              modalState.currentPage = totalPages || 1;
+            }
+          }
+          
+          // Reload groups in background
+          loadGroups();
+          
+          // Re-render modal
+          renderModalContent();
+        } catch (error) {
+          console.error("[Groups] Remove member failed:", error);
+          button.disabled = false;
+          button.textContent = originalText;
+          alert('Failed to remove member from group');
+        }
+      });
+    });
+  }
+  
+  // Close on backdrop click
+  modal.addEventListener('click', (e) => {
+    if (e.target === modal) {
+      modal.remove();
+    }
   });
 }
 

@@ -12,7 +12,7 @@ from pydantic import BaseModel, EmailStr, Field
 from typing import Optional
 from ..db import async_session, users, user_gamification
 from ..config import settings
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, func
 from passlib.hash import bcrypt
 import jwt
 from datetime import datetime, timedelta
