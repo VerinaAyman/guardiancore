@@ -798,7 +798,15 @@ chrome.webNavigation.onBeforeNavigate.addListener((nav) => {
   if (nav.frameId !== 0) return; // Only check main frame
   if (nav.url.startsWith('chrome://') || nav.url.startsWith('chrome-extension://')) return;
   
-  // Only check time windows here (blocklist is handled by declarativeNetRequest)
+  // Check allowlist first - allowlist bypasses all other rules including time windows
+  for (const rule of rulesCache.allowlist) {
+    if (matchesPattern(nav.url, rule.pattern)) {
+      console.log("[Blocking] ✅ Allowed by allowlist rule:", rule.pattern, "- bypassing time window check");
+      return; // Allow the navigation
+    }
+  }
+  
+  // Check time windows (blocklist is handled by declarativeNetRequest)
   const schedule = evaluateTimeWindows(nav.url);
   if (schedule.blocked) {
     console.log("[Blocking] ⏰ Time window blocking:", nav.url, schedule.reason);

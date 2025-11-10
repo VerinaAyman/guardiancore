@@ -560,6 +560,30 @@ async def create_child_rule(data: ChildRuleCreate, current_user: dict = Depends(
                     detail=f"{data.target_type.capitalize()} not found"
                 )
             
+            # Check if a rule with the same pattern already exists for this target
+            # For blocklist/allowlist, only check domain patterns (not time_window)
+            if data.rule_type in ["blocklist", "allowlist"]:
+                # Extract domain from pattern (handle time_window format with |)
+                pattern_to_check = data.pattern.split('|')[0] if '|' in data.pattern else data.pattern
+                
+                existing_rule_result = await session.execute(
+                    select(child_rules).where(
+                        child_rules.c.target_type == data.target_type,
+                        child_rules.c.target_id == data.target_id,
+                        child_rules.c.rule_type.in_(["blocklist", "allowlist"]),
+                        child_rules.c.pattern.like(f"{pattern_to_check}%")
+                    )
+                )
+                existing_rule = existing_rule_result.fetchone()
+                
+                # If exists and has different rule_type, delete it
+                if existing_rule and existing_rule.rule_type != data.rule_type:
+                    from sqlalchemy import delete
+                    await session.execute(
+                        delete(child_rules).where(child_rules.c.id == existing_rule.id)
+                    )
+                    logger.info(f"Deleted existing {existing_rule.rule_type} rule for pattern {pattern_to_check} - replacing with {data.rule_type}")
+            
             # Create rule
             stmt = insert(child_rules).values(
                 rule_type=data.rule_type,
