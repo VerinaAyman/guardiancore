@@ -164,11 +164,13 @@ async function handlePinReset() {
     resetPinBtn.disabled = true;
     resetPinBtn.textContent = 'Resetting...';
     
-    // Get stored recovery codes
-    const storage = await chrome.storage.local.get(['gc_recovery_codes']);
+    // Get stored data
+    const storage = await chrome.storage.local.get(['gc_recovery_codes', 'gc_backend_url', 'gc_email']);
     let recoveryCodes = storage.gc_recovery_codes || [];
+    const backendUrl = storage.gc_backend_url;
+    const email = storage.gc_email;
     
-    // Check if code is valid
+    // Check if code is valid locally first
     if (!recoveryCodes.includes(recoveryCode)) {
       showRecoveryError('Invalid or already used recovery code');
       resetPinBtn.disabled = false;
@@ -176,22 +178,61 @@ async function handlePinReset() {
       return;
     }
     
-    // Remove used recovery code
-    recoveryCodes = recoveryCodes.filter(code => code !== recoveryCode);
-    
-    // Update PIN and recovery codes
-    await chrome.storage.local.set({
-      gc_pin: newPin,
-      gc_recovery_codes: recoveryCodes,
-      gc_pin_verified: true
-    });
-    
-    resetPinBtn.textContent = '✓ PIN Reset!';
-    
-    // Redirect to options page
-    setTimeout(() => {
-      window.location.href = 'options.html';
-    }, 1000);
+    // Call backend to reset PIN with recovery code
+    if (backendUrl && email) {
+      try {
+        const response = await fetch(`${backendUrl}/auth/reset-pin-only`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: email,
+            recovery_code: recoveryCode,
+            new_pin: newPin
+          })
+        });
+        
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.detail || 'Failed to reset PIN');
+        }
+        
+        const data = await response.json();
+        
+        // Update local storage with new PIN and remaining recovery codes
+        const remainingCodes = recoveryCodes.filter(code => code !== recoveryCode);
+        await chrome.storage.local.set({
+          gc_pin: newPin,
+          gc_recovery_codes: remainingCodes,
+          gc_pin_verified: true
+        });
+        
+        resetPinBtn.textContent = '✓ PIN Reset!';
+        
+        // Redirect to options page
+        setTimeout(() => {
+          window.location.href = 'options.html';
+        }, 1000);
+        
+      } catch (error) {
+        console.error('[PIN Lock] Backend reset failed:', error);
+        showRecoveryError(error.message || 'Failed to reset PIN on server');
+        resetPinBtn.disabled = false;
+        resetPinBtn.textContent = 'Reset PIN';
+      }
+    } else {
+      // Fallback to local-only update (shouldn't happen normally)
+      const remainingCodes = recoveryCodes.filter(code => code !== recoveryCode);
+      await chrome.storage.local.set({
+        gc_pin: newPin,
+        gc_recovery_codes: remainingCodes,
+        gc_pin_verified: true
+      });
+      
+      resetPinBtn.textContent = '✓ PIN Reset!';
+      setTimeout(() => {
+        window.location.href = 'options.html';
+      }, 1000);
+    }
     
   } catch (error) {
     console.error('[PIN Lock] Reset failed:', error);
