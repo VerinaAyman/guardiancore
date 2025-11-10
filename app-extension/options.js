@@ -287,7 +287,7 @@ async function regenerateRecoveryCodes() {
 
 async function displayRecoveryCodes() {
   try {
-    // Fetch recovery codes from backend
+    // Always fetch recovery codes from backend (source of truth)
     const response = await fetch(`${backendUrl}/accounts/recovery-codes`, {
       headers: { 'Authorization': `Bearer ${currentUser.token}` }
     });
@@ -296,18 +296,24 @@ async function displayRecoveryCodes() {
       const data = await response.json();
       recoveryCodes = data.recovery_codes || [];
       
-      // Also sync with local storage
+      // Sync local storage with backend data (backend is source of truth)
+      await chrome.storage.local.set({
+        gc_recovery_codes: recoveryCodes
+      });
+      
+      // Get PIN from local storage
       const storage = await chrome.storage.local.get(['gc_pin']);
       pin = storage.gc_pin || null;
     } else {
-      // Fallback to local storage
+      // Fallback to local storage only if backend fails
+      console.warn('[Recovery] Backend fetch failed, using local storage as fallback');
       const storage = await chrome.storage.local.get(['gc_recovery_codes', 'gc_pin']);
       recoveryCodes = storage.gc_recovery_codes || [];
       pin = storage.gc_pin || null;
     }
   } catch (error) {
     console.error('[Recovery] Load failed:', error);
-    // Fallback to local storage
+    // Fallback to local storage on error
     const storage = await chrome.storage.local.get(['gc_recovery_codes', 'gc_pin']);
     recoveryCodes = storage.gc_recovery_codes || [];
     pin = storage.gc_pin || null;
