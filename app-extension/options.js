@@ -1634,9 +1634,16 @@ function generateTimeOptions() {
   for (let hour = 0; hour < 24; hour++) {
     for (let min = 0; min < 60; min += 15) {
       const timeStr = `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
-      options.push(`<option value="${timeStr}">${timeStr}</option>`);
+      const hour12 = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour;
+      const ampm = hour < 12 ? 'AM' : 'PM';
+      const displayStr = `${hour12.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')} ${ampm}`;
+      options.push(`<option value="${timeStr}">${displayStr}</option>`);
     }
   }
+  // Add 23:59 as the last option
+  const hour12 = 11;
+  const displayStr = `${hour12.toString().padStart(2, '0')}:59 PM`;
+  options.push(`<option value="23:59">${displayStr}</option>`);
   return options.join('');
 }
 

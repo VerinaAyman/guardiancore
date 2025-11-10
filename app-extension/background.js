@@ -518,16 +518,18 @@ function evaluateTimeWindows(url) {
           const dayMap = {'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6};
           const days = daysStr.split(',').map(d => dayMap[d.trim()]).filter(d => d !== undefined);
           
-          // Parse hours: 00:00-23:45 to start_hour and end_hour
+          // Parse hours: 00:00-23:59 to start_hour/start_min and end_hour/end_min
           const [startTime, endTime] = hoursStr.split('-');
-          const startHour = parseInt(startTime.split(':')[0]);
-          const endHour = parseInt(endTime.split(':')[0]);
+          const [startHour, startMin] = startTime.split(':').map(s => parseInt(s));
+          const [endHour, endMin] = endTime.split(':').map(s => parseInt(s));
           
           cfg = {
-            domain: domain || null,
+            domain: (domain && domain !== '*') ? domain : null,
             days: days.length > 0 ? days : [0,1,2,3,4,5,6],
             start_hour: startHour,
+            start_min: startMin || 0,
             end_hour: endHour,
+            end_min: endMin || 0,
             action: 'block' // Default action for pipe format
           };
         } else {
@@ -537,13 +539,21 @@ function evaluateTimeWindows(url) {
       
       if (cfg.days && !cfg.days.includes(currentDay)) continue;
       const startHour = cfg.start_hour ?? 0;
+      const startMin = cfg.start_min ?? 0;
       const endHour = cfg.end_hour ?? 24;
-      const inWindow = startHour > endHour
-        ? (currentHour >= startHour || currentHour < endHour)
-        : (currentHour >= startHour && currentHour < endHour);
+      const endMin = cfg.end_min ?? 0;
+      
+      // Convert current time and window bounds to minutes for accurate comparison
+      const currentTimeInMinutes = currentHour * 60 + now.getMinutes();
+      const startTimeInMinutes = startHour * 60 + startMin;
+      const endTimeInMinutes = endHour * 60 + endMin;
+      
+      const inWindow = startTimeInMinutes > endTimeInMinutes
+        ? (currentTimeInMinutes >= startTimeInMinutes || currentTimeInMinutes < endTimeInMinutes)
+        : (currentTimeInMinutes >= startTimeInMinutes && currentTimeInMinutes < endTimeInMinutes);
       const action = cfg.action === 'allow' ? 'allow' : 'block';
 
-      if (cfg.domain) {
+      if (cfg.domain && cfg.domain !== '*') {
         const matchesDomain = hostname === cfg.domain || hostname.endsWith('.' + cfg.domain);
         if (!matchesDomain) continue; // Domain-specific rule only applies to that domain
         if (action === 'allow') {
