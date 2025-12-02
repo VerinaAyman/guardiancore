@@ -7,6 +7,7 @@ from .routers.webauthn import router as webauthn_router
 from .routers.auth import router as auth_router
 from .routers.accounts import router as accounts_router
 from .routers.activity import router as activity_router
+from .routers.analysis import router as analysis_router
 from .db import init_db, cleanup_old_activity_events, cleanup_old_activity_summaries, aggregate_activity_summaries
 from .config import settings
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +20,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI(
     title=settings.APP_NAME, 
     version=settings.APP_VERSION,
-    description="GuardianCore Backend API - Phase 6: GDPR-Compliant Activity Dashboard"
+    description="GuardianCore Backend API - Phase 7: Intelligent Content Classification"
 )
 
 # Allow extension to call localhost API
@@ -40,6 +41,7 @@ app.include_router(webauthn_router)
 app.include_router(auth_router)
 app.include_router(accounts_router)
 app.include_router(activity_router)
+app.include_router(analysis_router)
 
 @app.on_event("startup")
 async def startup_event():

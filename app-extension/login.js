@@ -82,7 +82,7 @@ document.getElementById('parent-login-btn')?.addEventListener('click', async () 
     
     const data = await response.json();
     
-        // Store authentication
+    // Store authentication
     await chrome.storage.local.set({
       gc_auth_token: data.token,
       gc_user_id: data.user_id,
@@ -90,6 +90,33 @@ document.getElementById('parent-login-btn')?.addEventListener('click', async () 
       gc_username: data.username,
       gc_email: data.email || email
     });
+    
+    // Fetch PIN and recovery codes from server (for new device sync)
+    try {
+      const pinResponse = await fetch(`${backendUrl}/accounts/pin/fetch`, {
+        method: 'GET',
+        headers: { 
+          'Authorization': `Bearer ${data.token}`
+        }
+      });
+      
+      if (pinResponse.ok) {
+        const pinData = await pinResponse.json();
+        if (pinData.has_pin && pinData.pin) {
+          // Sync PIN and recovery codes to local storage
+          await chrome.storage.local.set({
+            gc_pin: pinData.pin,
+            gc_recovery_codes: pinData.recovery_codes || []
+          });
+          console.log('[Login] PIN synced from server');
+        } else {
+          console.log('[Login] No PIN set on server - will prompt for setup');
+        }
+      }
+    } catch (pinError) {
+      console.warn('[Login] Failed to fetch PIN from server:', pinError);
+      // Continue with login even if PIN fetch fails
+    }
     
     // Notify background service worker to reload authentication
     try {

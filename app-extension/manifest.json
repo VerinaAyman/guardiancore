@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "GuardianCore",
-  "version": "0.5.9",
-  "description": "Parental control with rules, groups, PIN protection, and XP rewards",
+  "version": "0.6.0",
+  "description": "Parental control with rules, groups, PIN protection, XP rewards, and AI content classification",
   "permissions": ["declarativeNetRequest", "declarativeNetRequestWithHostAccess", "webRequest", "webNavigation", "storage", "tabs", "downloads"],
   "host_permissions": ["<all_urls>"],
   "background": { 
@@ -14,6 +14,11 @@
     "default_title": "GuardianCore"
   },
   "options_page": "options.html",
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["content-script.js"],
+    "run_at": "document_idle"
+  }],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   },

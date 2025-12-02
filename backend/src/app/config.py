@@ -24,6 +24,9 @@ class Settings(BaseSettings):
 
     # API tokens (comma-separated)
     GC_API_TOKENS_RAW: str = Field(default="", env="GC_API_TOKENS_RAW")
+    
+    # Hugging Face API key for content classification
+    HUGGINGFACE_API_KEY: str = Field(default="", env="HUGGINGFACE_API_KEY")
 
     # Risk scoring weights (Week 4)
     RISK_WEIGHT_BLOCKED_SITE: int = Field(default=12, env="RISK_WEIGHT_BLOCKED_SITE")

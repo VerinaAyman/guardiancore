@@ -1310,6 +1310,55 @@ async def change_pin(data: ChangePINRequest, current_user: dict = Depends(requir
         )
 
 
+@router.get("/pin/fetch")
+async def fetch_pin(current_user: dict = Depends(require_parent)):
+    """Fetch PIN for syncing to new devices (returns decrypted PIN)."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(users).where(users.c.id == current_user["user_id"])
+            )
+            user = result.fetchone()
+            
+            if not user:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+            
+            # Get PIN from profile_data and decrypt it
+            profile_data = user.profile_data or {}
+            encrypted_pin = profile_data.get('pin')
+            
+            if not encrypted_pin:
+                return {
+                    "has_pin": False,
+                    "pin": None
+                }
+            
+            # Decrypt PIN for client storage
+            decrypted_pin = decrypt_pin(encrypted_pin)
+            
+            # Also return recovery codes for syncing
+            encrypted_codes = profile_data.get('recovery_codes', [])
+            recovery_codes = decrypt_recovery_codes(encrypted_codes) if encrypted_codes else []
+            
+            return {
+                "has_pin": True,
+                "pin": decrypted_pin,
+                "recovery_codes": recovery_codes
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to fetch PIN")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to fetch PIN"
+        )
+
+
 @router.get("/recovery-codes")
 async def get_recovery_codes(current_user: dict = Depends(require_parent)):
     """Get current recovery codes."""

@@ -1,6 +1,6 @@
 // GuardianCore Audit Probe - Background Service Worker with Rule Enforcement
-// Phase 5: Account-aware authentication and per-child rule enforcement
-console.log("GuardianCore Audit Probe v0.5.0 loaded");
+// Phase 7: Intelligent Content Classification with AI
+console.log("GuardianCore Audit Probe v0.6.0 loaded");
 
 // ========== AUTHENTICATION STATE ==========
 let currentUser = null; // { user_id, account_type, token, username }
@@ -1062,5 +1062,120 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     xpState.xp = 0; xpState.level = 1; persistXp();
     chrome.runtime.sendMessage({ type: "xp:update", xp: xpState.xp, level: xpState.level, progress: 0, delta: 0 }).catch(() => {});
     sendResponse({ ok: true });
+  } else if (message.type === "ANALYZE_PAGE") {
+    // Handle content analysis request from content script
+    handleAnalyzePageRequest(message, sender).then(result => {
+      sendResponse(result);
+    }).catch(error => {
+      console.error("[Analysis] Error:", error);
+      sendResponse({ received: true, error: error.message });
+    });
+    return true; // Async response
   }
 });
+
+// ========== INTELLIGENT CONTENT CLASSIFICATION ==========
+
+// Rate limiting for analysis requests
+const analysisRateLimit = new Map(); // domain -> lastAnalysisTime
+const ANALYSIS_COOLDOWN_MS = 60000; // 1 minute cooldown per domain
+
+/**
+ * Handle ANALYZE_PAGE request from content script.
+ * Sends page content to backend for AI classification.
+ */
+async function handleAnalyzePageRequest(message, sender) {
+  const { url, text } = message;
+  
+  // Only analyze for child accounts (parents don't need filtering)
+  if (!currentUser || currentUser.account_type !== 'child') {
+    console.log("[Analysis] Skipping analysis - not a child account");
+    return { received: true, skipped: true, reason: "not_child_account" };
+  }
+  
+  // Extract domain for rate limiting
+  let domain;
+  try {
+    domain = new URL(url).hostname.replace(/^www\./, '');
+  } catch (e) {
+    return { received: true, skipped: true, reason: "invalid_url" };
+  }
+  
+  // Check rate limit
+  const lastAnalysis = analysisRateLimit.get(domain) || 0;
+  if (Date.now() - lastAnalysis < ANALYSIS_COOLDOWN_MS) {
+    console.log(`[Analysis] Rate limited for domain: ${domain}`);
+    return { received: true, skipped: true, reason: "rate_limited" };
+  }
+  
+  // Update rate limit
+  analysisRateLimit.set(domain, Date.now());
+  
+  // Cleanup old rate limit entries
+  if (analysisRateLimit.size > 100) {
+    const oldestKey = analysisRateLimit.keys().next().value;
+    analysisRateLimit.delete(oldestKey);
+  }
+  
+  try {
+    const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
+    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
+    
+    console.log(`[Analysis] Sending content analysis request for: ${domain}`);
+    
+    const response = await fetch(`${backendUrl}/analyze/content`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentUser.token}`
+      },
+      body: JSON.stringify({
+        url: url,
+        text_content: text
+      })
+    });
+    
+    if (!response.ok) {
+      console.error(`[Analysis] Backend error: ${response.status}`);
+      return { received: true, error: "backend_error" };
+    }
+    
+    const result = await response.json();
+    console.log("[Analysis] Result:", result);
+    
+    if (!result.safe) {
+      console.log(`[Analysis] ⚠️ Unsafe content detected: ${result.blocked_by} - ${result.category}`);
+      
+      // Redirect to blocked page
+      if (sender.tab && sender.tab.id) {
+        const blockUrl = chrome.runtime.getURL("blocked.html") +
+          `?reason=${encodeURIComponent('AI Detection: ' + (result.category || 'Unsafe content'))}` +
+          `&category=${encodeURIComponent(result.category || 'ai_blocked')}` +
+          `&url=${encodeURIComponent(url)}`;
+        
+        chrome.tabs.update(sender.tab.id, { url: blockUrl });
+        
+        // Trigger rules refresh so the new blocklist rule is downloaded
+        if (currentUser.account_type === 'child') {
+          await loadChildRules(currentUser.user_id, currentUser.token);
+          await updateDynamicBlockingRules();
+        }
+      }
+      
+      // Track blocked attempt for activity
+      await captureBlockedAttempt(url, result.category || 'ai_blocked', 'AI Detection');
+      
+      // Negative XP for blocked content
+      awardXp({ trackers: 0, csp: false, cors: false, blocked: true, violation: true });
+      
+      return { received: true, blocked: true, category: result.category };
+    }
+    
+    return { received: true, safe: true };
+    
+  } catch (error) {
+    // Fail-open: if analysis fails, don't block the user
+    console.error("[Analysis] Request failed (fail-open):", error);
+    return { received: true, error: error.message };
+  }
+}
