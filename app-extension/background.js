@@ -1087,9 +1087,16 @@ const ANALYSIS_COOLDOWN_MS = 60000; // 1 minute cooldown per domain
 async function handleAnalyzePageRequest(message, sender) {
   const { url, text } = message;
   
+  console.log("[Analysis] ========================================");
+  console.log("[Analysis] Received ANALYZE_PAGE request");
+  console.log("[Analysis] URL:", url);
+  console.log("[Analysis] Text length:", text?.length || 0);
+  console.log("[Analysis] Current user:", currentUser ? `${currentUser.username} (${currentUser.account_type})` : "none");
+  
   // Only analyze for child accounts (parents don't need filtering)
   if (!currentUser || currentUser.account_type !== 'child') {
     console.log("[Analysis] Skipping analysis - not a child account");
+    console.log("[Analysis] ========================================");
     return { received: true, skipped: true, reason: "not_child_account" };
   }
   

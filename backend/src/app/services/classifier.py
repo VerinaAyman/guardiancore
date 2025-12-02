@@ -22,9 +22,15 @@ HIGH_RISK_KEYWORDS = {
     "nude", "nudes", "naked", "erotic", "erotica", "hentai", "xvideos",
     "pornhub", "xnxx", "redtube", "youporn", "brazzers", "onlyfans",
     
-    # Gambling
+    # Gambling - keywords
     "bet", "betting", "gamble", "gambling", "casino", "poker", "slots",
-    "blackjack", "roulette", "baccarat", "sportsbook", "wager",
+    "blackjack", "roulette", "baccarat", "sportsbook", "wager", "bookie",
+    
+    # Gambling - known sites/patterns
+    "1xbet", "xbet", "bet365", "betway", "betfair", "pinnacle", "bovada",
+    "draftkings", "fanduel", "pokerstars", "partypoker", "888poker",
+    "unibet", "ladbrokes", "williamhill", "paddy", "paddypower", "betfred",
+    "skybet", "coral", "betvictor", "sportingbet", "bwin", "parimatch",
     
     # Drugs/Substance abuse
     "drugs", "marijuana", "cannabis", "cocaine", "heroin", "meth",
@@ -70,7 +76,7 @@ class ContentClassifier:
     def _tokenize_url(self, url: str) -> set:
         """
         Tokenize URL into individual tokens for keyword matching.
-        Splits by common delimiters: /, ., -, _, ?
+        Splits by common delimiters and also separates numbers from letters.
         """
         try:
             parsed = urlparse(url)
@@ -80,8 +86,25 @@ class ContentClassifier:
             # Split by common delimiters
             tokens = re.split(r'[/.\-_?&=]', url_string)
             
-            # Filter empty tokens and return as set
-            return {token.strip() for token in tokens if token.strip()}
+            # Further split alphanumeric tokens (e.g., "1xbet" -> "1", "xbet", "x", "bet")
+            expanded_tokens = set()
+            for token in tokens:
+                if not token.strip():
+                    continue
+                expanded_tokens.add(token.strip())
+                
+                # Split by number-letter boundaries (e.g., "1xbet" -> ["1", "xbet"])
+                parts = re.split(r'(\d+)', token)
+                for part in parts:
+                    if part.strip():
+                        expanded_tokens.add(part.strip())
+                
+                # Also try to find known keywords as substrings
+                for keyword in HIGH_RISK_KEYWORDS:
+                    if keyword in token and len(keyword) >= 3:
+                        expanded_tokens.add(keyword)
+            
+            return expanded_tokens
         except Exception as e:
             logger.warning(f"[Classifier] URL tokenization failed: {e}")
             return set()

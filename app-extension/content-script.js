@@ -6,11 +6,12 @@
   
   // Prevent multiple injections
   if (window.__guardiancore_content_script_loaded) {
+    console.log('[GuardianCore] Content script already loaded, skipping');
     return;
   }
   window.__guardiancore_content_script_loaded = true;
   
-  console.log('[GuardianCore] Content script loaded for:', window.location.href);
+  console.log('%c[GuardianCore] Content script loaded for: ' + window.location.href, 'color: #00ff00; font-weight: bold');
   
   // Skip analysis for certain URLs
   function shouldSkipAnalysis() {
@@ -70,13 +71,16 @@
     const pageText = extractPageText();
     const url = window.location.href;
     
+    console.log('[GuardianCore] Extracted text length:', pageText.length);
+    
     // Don't send if no meaningful text
     if (!pageText || pageText.length < 50) {
-      console.log('[GuardianCore] Insufficient text content for analysis');
+      console.log('[GuardianCore] Insufficient text content for analysis (< 50 chars)');
       return;
     }
     
-    console.log('[GuardianCore] Requesting content analysis...');
+    console.log('%c[GuardianCore] Requesting content analysis for: ' + url, 'color: #00ff00');
+    console.log('[GuardianCore] Text preview:', pageText.substring(0, 200) + '...');
     
     // Send message to background worker
     chrome.runtime.sendMessage({
@@ -85,12 +89,19 @@
       text: pageText
     }, (response) => {
       if (chrome.runtime.lastError) {
-        console.warn('[GuardianCore] Failed to send analysis request:', chrome.runtime.lastError.message);
+        console.error('[GuardianCore] Failed to send analysis request:', chrome.runtime.lastError.message);
         return;
       }
       
-      if (response && response.received) {
-        console.log('[GuardianCore] Analysis request received by background');
+      if (response) {
+        console.log('[GuardianCore] Analysis response:', response);
+        if (response.blocked) {
+          console.log('%c[GuardianCore] PAGE BLOCKED: ' + response.category, 'color: #ff0000; font-weight: bold');
+        } else if (response.safe) {
+          console.log('%c[GuardianCore] Page is safe', 'color: #00ff00');
+        } else if (response.skipped) {
+          console.log('[GuardianCore] Analysis skipped:', response.reason);
+        }
       }
     });
   }
