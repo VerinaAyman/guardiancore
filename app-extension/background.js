@@ -1152,21 +1152,15 @@ async function handleAnalyzePageRequest(message, sender) {
     
     if (!result.safe) {
       console.log(`[Analysis] ⚠️ Unsafe content detected: ${result.blocked_by} - ${result.category}`);
+      console.log(`[Analysis] Rule created: ${result.rule_created}, Domain: ${result.domain}`);
       
-      // Redirect to blocked page
-      if (sender.tab && sender.tab.id) {
-        const blockUrl = chrome.runtime.getURL("blocked.html") +
-          `?reason=${encodeURIComponent('AI Detection: ' + (result.category || 'Unsafe content'))}` +
-          `&category=${encodeURIComponent(result.category || 'ai_blocked')}` +
-          `&url=${encodeURIComponent(url)}`;
-        
-        chrome.tabs.update(sender.tab.id, { url: blockUrl });
-        
-        // Trigger rules refresh so the new blocklist rule is downloaded
-        if (currentUser.account_type === 'child') {
-          await loadChildRules(currentUser.user_id, currentUser.token);
-          await updateDynamicBlockingRules();
-        }
+      // IMPORTANT: Refresh rules FIRST so the new blocklist rule is active
+      // This ensures the domain is blocked on future visits immediately
+      if (currentUser.account_type === 'child') {
+        console.log("[Analysis] Refreshing rules to apply new blocklist...");
+        await loadChildRules(currentUser.user_id, currentUser.token);
+        await updateDynamicBlockingRules();
+        console.log("[Analysis] ✅ Rules refreshed - domain now permanently blocked");
       }
       
       // Track blocked attempt for activity
@@ -1175,7 +1169,18 @@ async function handleAnalyzePageRequest(message, sender) {
       // Negative XP for blocked content
       awardXp({ trackers: 0, csp: false, cors: false, blocked: true, violation: true });
       
-      return { received: true, blocked: true, category: result.category };
+      // THEN redirect to blocked page
+      if (sender.tab && sender.tab.id) {
+        const blockUrl = chrome.runtime.getURL("blocked.html") +
+          `?reason=${encodeURIComponent('AI Detection: ' + (result.category || 'Unsafe content'))}` +
+          `&category=${encodeURIComponent(result.category || 'ai_blocked')}` +
+          `&url=${encodeURIComponent(url)}` +
+          `&rule_created=${result.rule_created ? 'true' : 'false'}`;
+        
+        chrome.tabs.update(sender.tab.id, { url: blockUrl });
+      }
+      
+      return { received: true, blocked: true, category: result.category, rule_created: result.rule_created };
     }
     
     return { received: true, safe: true };
