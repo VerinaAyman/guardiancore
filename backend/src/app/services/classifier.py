@@ -68,9 +68,12 @@ UNSAFE_CATEGORIES = [
 class ContentClassifier:
     """Two-layer content classification system."""
     
+    # Model URLs for zero-shot classification (in order of preference)
+    PRIMARY_MODEL = "https://api-inference.huggingface.co/models/MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
+    FALLBACK_MODEL = "https://api-inference.huggingface.co/models/cross-encoder/nli-distilroberta-base"
+    
     def __init__(self):
         self.api_key = getattr(settings, 'HUGGINGFACE_API_KEY', None)
-        self.api_url = "https://api-inference.huggingface.co/models/facebook/bart-large-mnli"
         self.timeout = 30.0  # 30 seconds timeout for API calls
     
     def _tokenize_url(self, url: str) -> set:
@@ -123,10 +126,44 @@ class ContentClassifier:
         
         return False, None
     
+    async def _call_hf_model(self, model_url: str, text: str, headers: dict) -> Tuple[Optional[dict], int]:
+        """
+        Call a specific Hugging Face model.
+        Returns (result_dict, status_code)
+        """
+        # Simplified candidate labels for better compatibility
+        candidate_labels = ["safe", "unsafe", "adult", "toxic", "gambling", "violence"]
+        
+        payload = {
+            "inputs": text,
+            "parameters": {
+                "candidate_labels": candidate_labels
+            }
+        }
+        
+        model_name = model_url.split("/")[-1]
+        logger.info(f"[Classifier] Calling model: {model_name}")
+        
+        async with httpx.AsyncClient(timeout=self.timeout) as client:
+            response = await client.post(
+                model_url,
+                json=payload,
+                headers=headers
+            )
+            
+            logger.info(f"[Classifier] Model {model_name} responded with status: {response.status_code}")
+            
+            if response.status_code == 200:
+                return response.json(), 200
+            else:
+                logger.warning(f"[Classifier] Model {model_name} error: {response.status_code} - {response.text[:200]}")
+                return None, response.status_code
+    
     async def _analyze_content_with_api(self, text: str) -> Tuple[bool, float, str]:
         """
         Layer 2 (Slow Path): Analyze content using Hugging Face Inference API.
         Uses zero-shot classification to detect unsafe categories.
+        Implements fallback logic if primary model fails.
         Returns (is_unsafe, confidence, detected_category)
         """
         if not self.api_key:
@@ -139,58 +176,84 @@ class ContentClassifier:
         if not truncated_text.strip():
             return False, 0.0, ""
         
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "inputs": truncated_text,
-                "parameters": {
-                    "candidate_labels": UNSAFE_CATEGORIES,
-                    "multi_label": True
-                }
-            }
-            
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.post(
-                    self.api_url,
-                    json=payload,
-                    headers=headers
-                )
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        
+        # Try models in order of preference
+        models_to_try = [
+            (self.PRIMARY_MODEL, "DeBERTa-v3-base-mnli"),
+            (self.FALLBACK_MODEL, "nli-distilroberta-base")
+        ]
+        
+        result = None
+        used_model = None
+        
+        for model_url, model_name in models_to_try:
+            try:
+                logger.info(f"[Classifier] Attempting classification with {model_name}...")
+                api_result, status_code = await self._call_hf_model(model_url, truncated_text, headers)
                 
-                if response.status_code == 503:
-                    # Model is loading, fail-open
-                    logger.warning("[Classifier] HF model is loading, allowing content (fail-open)")
-                    return False, 0.0, ""
-                
-                if response.status_code != 200:
-                    logger.error(f"[Classifier] HF API error: {response.status_code} - {response.text}")
-                    return False, 0.0, ""
-                
-                result = response.json()
-                
-                # Parse zero-shot classification results
-                # Result format: {"sequence": "...", "labels": [...], "scores": [...]}
-                if "labels" in result and "scores" in result:
-                    labels = result["labels"]
-                    scores = result["scores"]
+                if status_code == 200 and api_result:
+                    result = api_result
+                    used_model = model_name
+                    logger.info(f"[Classifier] ✅ Successfully used model: {model_name}")
+                    break
+                elif status_code in (410, 503):
+                    # 410 = Gone (model unavailable), 503 = Loading
+                    logger.warning(f"[Classifier] Model {model_name} unavailable (status {status_code}), trying fallback...")
+                    continue
+                else:
+                    # Other errors, try fallback
+                    logger.warning(f"[Classifier] Model {model_name} failed (status {status_code}), trying fallback...")
+                    continue
                     
-                    # Check if any unsafe category has high confidence (>0.7)
-                    threshold = 0.7
-                    for label, score in zip(labels, scores):
-                        if score >= threshold:
-                            logger.info(f"[Classifier] Content classified as '{label}' with confidence {score:.2f}")
-                            return True, score, label
-                
-                return False, 0.0, ""
-                
-        except httpx.TimeoutException:
-            logger.warning("[Classifier] HF API timeout, allowing content (fail-open)")
+            except httpx.TimeoutException:
+                logger.warning(f"[Classifier] Model {model_name} timed out, trying fallback...")
+                continue
+            except Exception as e:
+                logger.error(f"[Classifier] Model {model_name} error: {e}, trying fallback...")
+                continue
+        
+        if not result:
+            logger.warning("[Classifier] All models failed, allowing content (fail-open)")
             return False, 0.0, ""
+        
+        # Parse zero-shot classification results
+        # Result format: {"sequence": "...", "labels": [...], "scores": [...]}
+        try:
+            if "labels" in result and "scores" in result:
+                labels = result["labels"]
+                scores = result["scores"]
+                
+                logger.info(f"[Classifier] Classification results from {used_model}:")
+                for label, score in zip(labels[:5], scores[:5]):
+                    logger.info(f"[Classifier]   - {label}: {score:.2%}")
+                
+                # Check for unsafe categories with high confidence
+                threshold = 0.6  # Slightly lower threshold for better detection
+                unsafe_labels = {"unsafe", "adult", "toxic", "gambling", "violence"}
+                
+                for label, score in zip(labels, scores):
+                    if label.lower() in unsafe_labels and score >= threshold:
+                        logger.info(f"[Classifier] ⚠️ Content flagged as '{label}' with confidence {score:.2%}")
+                        return True, score, label
+                
+                # Also check if "safe" has LOW confidence (meaning it's likely unsafe)
+                for label, score in zip(labels, scores):
+                    if label.lower() == "safe" and score < 0.3:
+                        # If "safe" score is very low, it's suspicious
+                        logger.info(f"[Classifier] ⚠️ Low 'safe' score ({score:.2%}) - content may be unsafe")
+                        # Find the highest non-safe score
+                        for l, s in zip(labels, scores):
+                            if l.lower() != "safe" and s > 0.4:
+                                return True, s, l
+            
+            return False, 0.0, ""
+            
         except Exception as e:
-            logger.error(f"[Classifier] HF API error: {e}")
+            logger.error(f"[Classifier] Failed to parse API response: {e}")
             return False, 0.0, ""
     
     async def predict(self, url: str, text_content: str = "") -> dict:
