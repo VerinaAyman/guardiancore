@@ -52,6 +52,7 @@ class DomainActivitySummary(BaseModel):
     has_csp: bool
     has_cors: bool
     time_spent_today: int  # minutes today
+    rule_status: str  # "blocked", "allowed", or "none"
 
 
 class DashboardResponse(BaseModel):
@@ -477,9 +478,38 @@ async def get_activity_dashboard(
             
             logger.info(f"[Activity] Aggregated {len(domain_data)} unique domains")
             
+            # Fetch existing rules for this child to determine rule_status
+            rules_result = await session.execute(
+                select(child_rules).where(
+                    and_(
+                        child_rules.c.target_type == "child",
+                        child_rules.c.target_id == child_id,
+                        child_rules.c.enabled == True,
+                        child_rules.c.rule_type.in_(["blocklist", "allowlist"])
+                    )
+                )
+            )
+            rules = rules_result.fetchall()
+            
+            # Build domain -> rule_status map
+            domain_rule_status = {}
+            for rule in rules:
+                pattern = rule.pattern.lower()
+                if rule.rule_type == "blocklist":
+                    domain_rule_status[pattern] = "blocked"
+                elif rule.rule_type == "allowlist":
+                    # Allowlist takes precedence if both exist
+                    domain_rule_status[pattern] = "allowed"
+            
+            logger.info(f"[Activity] Found {len(domain_rule_status)} rules for child {child_id}")
+            
             # Convert to response model
             summaries = []
             for domain, data in domain_data.items():
+                # Check rule status for this domain
+                domain_lower = domain.lower()
+                rule_status = domain_rule_status.get(domain_lower, "none")
+                
                 summaries.append(DomainActivitySummary(
                     domain=domain,
                     total_time_minutes=data["total_time_seconds"] // 60,
@@ -487,7 +517,8 @@ async def get_activity_dashboard(
                     blocked_count=data["blocked_count"],
                     has_csp=data["has_csp"],
                     has_cors=data["has_cors"],
-                    time_spent_today=data["time_today"] // 60
+                    time_spent_today=data["time_today"] // 60,
+                    rule_status=rule_status
                 ))
             
             # Sort by total time descending

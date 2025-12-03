@@ -2397,8 +2397,10 @@ function renderActivityTable() {
         <td style="padding:14px 12px; text-align:center;"><span style="background:${summary.has_csp ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}; color:${summary.has_csp ? 'rgb(34,197,94)' : 'rgb(239,68,68)'}; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:600;">${summary.has_csp ? 'Yes' : 'No'}</span></td>
         <td style="padding:14px 12px; text-align:center;"><span style="background:${summary.has_cors ? 'rgba(34,197,94,0.2)' : 'rgba(239,68,68,0.2)'}; color:${summary.has_cors ? 'rgb(34,197,94)' : 'rgb(239,68,68)'}; padding:4px 10px; border-radius:6px; font-size:12px; font-weight:600;">${summary.has_cors ? 'Yes' : 'No'}</span></td>
         <td style="padding:14px 12px; text-align:center;">
-          <button class="activity-block-btn" data-domain="${escapeHtml(summary.domain)}" style="padding:8px 16px; margin:0 4px; background:rgba(239,68,68,0.15); color:rgb(239,68,68); border:1px solid rgba(239,68,68,0.3); border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">Block</button>
-          <button class="activity-allow-btn" data-domain="${escapeHtml(summary.domain)}" style="padding:8px 16px; margin:0 4px; background:rgba(34,197,94,0.15); color:rgb(34,197,94); border:1px solid rgba(34,197,94,0.3); border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">Allow</button>
+          ${summary.rule_status === 'blocked' 
+            ? `<button class="activity-allow-btn" data-domain="${escapeHtml(summary.domain)}" style="padding:8px 16px; margin:0 4px; background:rgba(34,197,94,0.15); color:rgb(34,197,94); border:1px solid rgba(34,197,94,0.3); border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">Allow</button>`
+            : `<button class="activity-block-btn" data-domain="${escapeHtml(summary.domain)}" style="padding:8px 16px; margin:0 4px; background:rgba(239,68,68,0.15); color:rgb(239,68,68); border:1px solid rgba(239,68,68,0.3); border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; transition:all 0.2s;">Block</button>`
+          }
         </td>
       </tr>
     `;
