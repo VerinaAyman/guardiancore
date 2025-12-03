@@ -1076,9 +1076,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 // ========== INTELLIGENT CONTENT CLASSIFICATION ==========
 
-// Rate limiting for analysis requests
+// Rate limiting for analysis requests (only for AI calls on unknown domains)
 const analysisRateLimit = new Map(); // domain -> lastAnalysisTime
-const ANALYSIS_COOLDOWN_MS = 60000; // 1 minute cooldown per domain
+const ANALYSIS_COOLDOWN_MS = 300000; // 5 minute cooldown per domain (only for domains not in allow/blocklist)
 
 /**
  * Handle ANALYZE_PAGE request from content script.
@@ -1100,7 +1100,7 @@ async function handleAnalyzePageRequest(message, sender) {
     return { received: true, skipped: true, reason: "not_child_account" };
   }
   
-  // Extract domain for rate limiting
+  // Extract domain
   let domain;
   try {
     domain = new URL(url).hostname.replace(/^www\./, '');
@@ -1108,10 +1108,31 @@ async function handleAnalyzePageRequest(message, sender) {
     return { received: true, skipped: true, reason: "invalid_url" };
   }
   
-  // Check rate limit
+  // ========== CHECK LOCAL RULES FIRST (before rate limiting) ==========
+  
+  // Check if domain is in ALLOWLIST → skip AI analysis entirely
+  for (const rule of rulesCache.allowlist) {
+    if (matchesPattern(url, rule.pattern)) {
+      console.log(`[Analysis] ✅ Domain ${domain} is ALLOWLISTED - skipping AI analysis`);
+      console.log("[Analysis] ========================================");
+      return { received: true, safe: true, skipped: true, reason: "allowlisted" };
+    }
+  }
+  
+  // Check if domain is in BLOCKLIST → already blocked by DNR, no need to analyze
+  for (const rule of rulesCache.blocklist) {
+    if (matchesPattern(url, rule.pattern)) {
+      console.log(`[Analysis] 🚫 Domain ${domain} is already BLOCKLISTED - no AI analysis needed`);
+      console.log("[Analysis] ========================================");
+      return { received: true, blocked: true, skipped: true, reason: "already_blocked" };
+    }
+  }
+  
+  // ========== NOW CHECK RATE LIMIT (only for unknown domains) ==========
+  
   const lastAnalysis = analysisRateLimit.get(domain) || 0;
   if (Date.now() - lastAnalysis < ANALYSIS_COOLDOWN_MS) {
-    console.log(`[Analysis] Rate limited for domain: ${domain}`);
+    console.log(`[Analysis] Rate limited for domain: ${domain} (unknown domain, already analyzed recently)`);
     return { received: true, skipped: true, reason: "rate_limited" };
   }
   
