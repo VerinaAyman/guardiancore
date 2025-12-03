@@ -76,11 +76,11 @@ async def run_retention_jobs():
             aggregated = await aggregate_activity_summaries()
             logger.info(f"[Retention] Aggregated {aggregated} summary rows")
             
-            # Cleanup expired raw events (30 days)
+            # Cleanup expired raw events (3 days)
             events_deleted = await cleanup_old_activity_events()
             logger.info(f"[Retention] Deleted {events_deleted} expired events")
             
-            # Cleanup expired summaries (90 days)
+            # Cleanup expired summaries (3 days)
             summaries_deleted = await cleanup_old_activity_summaries()
             logger.info(f"[Retention] Deleted {summaries_deleted} expired summaries")
             

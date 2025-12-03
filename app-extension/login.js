@@ -82,7 +82,7 @@ document.getElementById('parent-login-btn')?.addEventListener('click', async () 
     
     const data = await response.json();
     
-    // Store authentication
+        // Store authentication
     await chrome.storage.local.set({
       gc_auth_token: data.token,
       gc_user_id: data.user_id,

@@ -129,7 +129,7 @@ async def capture_activity_event(event: ActivityEventCreate, current_user: dict 
     - Only captures eTLD+1 domain, no full URLs
     - No page titles, messages, or content
     - Only if tracking is enabled for this child
-    - Auto-expires after 30 days
+    - Auto-expires after 3 days
     """
     try:
         # Only child accounts can submit activity

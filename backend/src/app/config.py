@@ -24,7 +24,7 @@ class Settings(BaseSettings):
 
     # API tokens (comma-separated)
     GC_API_TOKENS_RAW: str = Field(default="", env="GC_API_TOKENS_RAW")
-    
+
     # Hugging Face API key for content classification
     HUGGINGFACE_API_KEY: str = Field(default="", env="HUGGINGFACE_API_KEY")
 

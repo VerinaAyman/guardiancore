@@ -2193,7 +2193,7 @@ async function handleActivityEnableTracking() {
       `NOT recorded:\n` +
       `• Full URLs, page titles, or messages\n` +
       `• Page content or form data\n\n` +
-      `Data is automatically deleted after 30-90 days.\n` +
+      `Data is automatically deleted after 3 days.\n` +
       `Your child will be notified about this tracking.`);
     
     if (!consent) return;
@@ -2224,7 +2224,7 @@ async function handleActivityEnableTracking() {
 
 async function handleActivityDisableTracking() {
   try {
-    const confirmDisable = confirm(`Disable activity tracking for ${selectedActivityChild.username}?\n\nExisting data will remain until it expires (30-90 days).`);
+    const confirmDisable = confirm(`Disable activity tracking for ${selectedActivityChild.username}?\n\nExisting data will remain until it expires (3 days).`);
     if (!confirmDisable) return;
     
     const response = await fetch(`${backendUrl}/activity/settings`, {

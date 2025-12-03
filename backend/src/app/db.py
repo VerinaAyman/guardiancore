@@ -194,7 +194,7 @@ child_activity_settings = Table(
 Index("idx_activity_settings_child", child_activity_settings.c.child_id)
 Index("idx_activity_settings_parent", child_activity_settings.c.parent_id)
 
-# Raw activity events (retained ≤30 days)
+# Raw activity events (retained ≤3 days)
 activity_events = Table(
     "activity_events", metadata,
     Column("id", BigInteger, primary_key=True, autoincrement=True),
@@ -208,7 +208,7 @@ activity_events = Table(
     Column("blocked_category", Text, nullable=True),  # category if blocked
     Column("event_date", TIMESTAMP(timezone=True), nullable=False),  # event date (day-level)
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
-    Column("expires_at", TIMESTAMP(timezone=True), nullable=False)  # auto-delete after 30 days
+    Column("expires_at", TIMESTAMP(timezone=True), nullable=False)  # auto-delete after 3 days
 )
 
 Index("idx_activity_events_child", activity_events.c.child_id)
@@ -216,7 +216,7 @@ Index("idx_activity_events_domain", activity_events.c.domain_hash)
 Index("idx_activity_events_date", activity_events.c.event_date)
 Index("idx_activity_events_expires", activity_events.c.expires_at)
 
-# Daily activity summaries (retained ≤90 days, aggregated from events)
+# Daily activity summaries (retained ≤3 days, aggregated from events)
 activity_summaries = Table(
     "activity_summaries", metadata,
     Column("id", BigInteger, primary_key=True, autoincrement=True),
@@ -231,7 +231,7 @@ activity_summaries = Table(
     Column("has_cors", Boolean, nullable=True),  # aggregated: true if any visit had CORS
     Column("created_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
     Column("updated_at", TIMESTAMP(timezone=True), nullable=False, server_default="now()"),
-    Column("expires_at", TIMESTAMP(timezone=True), nullable=False)  # auto-delete after 90 days
+    Column("expires_at", TIMESTAMP(timezone=True), nullable=False)  # auto-delete after 3 days
 )
 
 Index("idx_activity_summaries_child", activity_summaries.c.child_id)
