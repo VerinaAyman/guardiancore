@@ -149,7 +149,7 @@ async def capture_activity_event(event: ActivityEventCreate, current_user: dict 
         
         async with async_session() as session:
             domain_hash = hash_domain(event.domain)
-            expires_at = datetime.utcnow() + timedelta(days=30)
+            expires_at = datetime.utcnow() + timedelta(days=3)  # 3-day retention
             
             stmt = insert(activity_events).values(
                 child_id=child_id,
@@ -421,15 +421,22 @@ async def get_activity_dashboard(
                         "time_today": 0
                     }
                 
-                domain_data[domain]["total_time_seconds"] += row.total_time_seconds
-                domain_data[domain]["visit_count"] += row.visit_count
-                domain_data[domain]["blocked_count"] += row.blocked_count
-                domain_data[domain]["has_csp"] = domain_data[domain]["has_csp"] or row.has_csp
-                domain_data[domain]["has_cors"] = domain_data[domain]["has_cors"] or row.has_cors
+                domain_data[domain]["total_time_seconds"] += row.total_time_seconds or 0
+                domain_data[domain]["visit_count"] += row.visit_count or 0
+                domain_data[domain]["blocked_count"] += row.blocked_count or 0
+                # Handle None values explicitly
+                if row.has_csp is True:
+                    domain_data[domain]["has_csp"] = True
+                if row.has_cors is True:
+                    domain_data[domain]["has_cors"] = True
                 
-                # Check if this is today's data
-                if row.summary_date.date() == today:
-                    domain_data[domain]["time_today"] += row.total_time_seconds
+                # Check if this is today's data - handle both datetime and date objects
+                try:
+                    summary_date = row.summary_date.date() if hasattr(row.summary_date, 'date') else row.summary_date
+                    if summary_date == today:
+                        domain_data[domain]["time_today"] += row.total_time_seconds or 0
+                except Exception as date_err:
+                    logger.warning(f"[Activity] Could not compare date: {date_err}")
             
             # Then, add today's raw events (real-time data)
             for event in event_rows:
@@ -447,8 +454,12 @@ async def get_activity_dashboard(
                 # Add time spent
                 if event.event_type == "time_spent" and event.duration_seconds:
                     domain_data[domain]["total_time_seconds"] += event.duration_seconds
-                    if event.event_date.date() == today:
-                        domain_data[domain]["time_today"] += event.duration_seconds
+                    try:
+                        event_date = event.event_date.date() if hasattr(event.event_date, 'date') else event.event_date
+                        if event_date == today:
+                            domain_data[domain]["time_today"] += event.duration_seconds
+                    except Exception:
+                        pass
                 
                 # Count visits
                 if event.event_type == "visit":
@@ -458,10 +469,10 @@ async def get_activity_dashboard(
                 if event.event_type == "blocked":
                     domain_data[domain]["blocked_count"] += 1
                 
-                # Track security indicators
-                if event.has_csp:
+                # Track security indicators - handle None explicitly
+                if event.has_csp is True:
                     domain_data[domain]["has_csp"] = True
-                if event.has_cors:
+                if event.has_cors is True:
                     domain_data[domain]["has_cors"] = True
             
             logger.info(f"[Activity] Aggregated {len(domain_data)} unique domains")

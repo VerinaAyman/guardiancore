@@ -254,7 +254,7 @@ async def init_db():
         logger.error(f"Failed to initialize database: {e}")
         raise
 
-async def cleanup_old_audits(days: int = 30):
+async def cleanup_old_audits(days: int = 3):
     """Delete audit records older than specified days (retention job)."""
     try:
         async with async_session() as session:
@@ -283,29 +283,31 @@ async def cleanup_old_throttle(minutes: int = 60):
         logger.error(f"Failed to cleanup old throttle: {e}")
         raise
 
-async def cleanup_old_activity_events(days: int = 30):
-    """Delete activity events older than specified days (GDPR retention)."""
+async def cleanup_old_activity_events(days: int = 3):
+    """Delete activity events older than specified days (retention)."""
     try:
         async with async_session() as session:
-            stmt = text(f"DELETE FROM activity_events WHERE expires_at < now()")
+            # Delete expired events OR events older than days limit
+            stmt = text(f"DELETE FROM activity_events WHERE expires_at < now() OR event_date < now() - interval '{days} days'")
             result = await session.execute(stmt)
             await session.commit()
             deleted_count = result.rowcount
-            logger.info(f"Activity retention: deleted {deleted_count} raw events (30-day limit)")
+            logger.info(f"Activity retention: deleted {deleted_count} raw events (older than {days} days)")
             return deleted_count
     except Exception as e:
         logger.error(f"Failed to cleanup old activity events: {e}")
         raise
 
-async def cleanup_old_activity_summaries(days: int = 90):
-    """Delete activity summaries older than specified days (GDPR retention)."""
+async def cleanup_old_activity_summaries(days: int = 3):
+    """Delete activity summaries older than specified days (retention)."""
     try:
         async with async_session() as session:
-            stmt = text(f"DELETE FROM activity_summaries WHERE expires_at < now()")
+            # Delete expired summaries OR summaries older than days limit
+            stmt = text(f"DELETE FROM activity_summaries WHERE expires_at < now() OR summary_date < now() - interval '{days} days'")
             result = await session.execute(stmt)
             await session.commit()
             deleted_count = result.rowcount
-            logger.info(f"Activity retention: deleted {deleted_count} summaries (90-day limit)")
+            logger.info(f"Activity retention: deleted {deleted_count} summaries (older than {days} days)")
             return deleted_count
     except Exception as e:
         logger.error(f"Failed to cleanup old activity summaries: {e}")
@@ -332,7 +334,7 @@ async def aggregate_activity_summaries():
                     COUNT(CASE WHEN event_type = 'blocked' THEN 1 END) as blocked_count,
                     BOOL_OR(has_csp) as has_csp,
                     BOOL_OR(has_cors) as has_cors,
-                    (DATE(event_date) + INTERVAL '90 days')::timestamp as expires_at
+                    (DATE(event_date) + INTERVAL '3 days')::timestamp as expires_at
                 FROM activity_events
                 WHERE DATE(event_date) = CURRENT_DATE - INTERVAL '1 day'
                 GROUP BY child_id, domain_hash, domain, DATE(event_date)
