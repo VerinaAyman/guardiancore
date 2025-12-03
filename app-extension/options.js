@@ -2464,12 +2464,14 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
-async function handleActivityBlockDomain(domain) {
+async function handleActivityBlockDomain(domain, force = false) {
   try {
     if (!selectedActivityChild) return;
     
-    const confirmBlock = confirm(`Block ${domain} for ${selectedActivityChild.username}?\n\nThis will create a blocklist rule and prevent access to this domain.`);
-    if (!confirmBlock) return;
+    if (!force) {
+      const confirmBlock = confirm(`Block ${domain} for ${selectedActivityChild.username}?\n\nThis will create a blocklist rule and prevent access to this domain.`);
+      if (!confirmBlock) return;
+    }
     
     const response = await fetch(`${backendUrl}/activity/actions`, {
       method: 'POST',
@@ -2481,15 +2483,37 @@ async function handleActivityBlockDomain(domain) {
         child_id: selectedActivityChild.id,
         domain: domain,
         action: 'block',
-        target_type: 'child'
+        target_type: 'child',
+        force: force
       })
     });
     
-    if (!response.ok) throw new Error('Failed to block domain');
-    
     const result = await response.json();
-    alert(result.message);
     
+    // Handle conflict - domain is currently allowed
+    if (result.conflict && !force) {
+      const switchConfirm = confirm(
+        `⚠️ ${domain} is currently ALLOWED for ${selectedActivityChild.username}.\n\n` +
+        `Do you want to remove it from the allowlist and BLOCK it instead?`
+      );
+      if (switchConfirm) {
+        return handleActivityBlockDomain(domain, true);
+      }
+      return;
+    }
+    
+    // Handle duplicate
+    if (result.duplicate) {
+      alert(`ℹ️ ${domain} is already blocked.`);
+      return;
+    }
+    
+    if (!result.success) {
+      alert(`Failed: ${result.message}`);
+      return;
+    }
+    
+    alert(`✅ ${result.message}`);
     await loadActivityDashboard();
     
   } catch (error) {
@@ -2498,12 +2522,14 @@ async function handleActivityBlockDomain(domain) {
   }
 }
 
-async function handleActivityAllowDomain(domain) {
+async function handleActivityAllowDomain(domain, force = false) {
   try {
     if (!selectedActivityChild) return;
     
-    const confirmAllow = confirm(`Allow ${domain} for ${selectedActivityChild.username}?\n\nThis will create an allowlist rule and ensure access to this domain is not blocked.`);
-    if (!confirmAllow) return;
+    if (!force) {
+      const confirmAllow = confirm(`Allow ${domain} for ${selectedActivityChild.username}?\n\nThis will create an allowlist rule and ensure access to this domain is not blocked.`);
+      if (!confirmAllow) return;
+    }
     
     const response = await fetch(`${backendUrl}/activity/actions`, {
       method: 'POST',
@@ -2515,15 +2541,37 @@ async function handleActivityAllowDomain(domain) {
         child_id: selectedActivityChild.id,
         domain: domain,
         action: 'allow',
-        target_type: 'child'
+        target_type: 'child',
+        force: force
       })
     });
     
-    if (!response.ok) throw new Error('Failed to allow domain');
-    
     const result = await response.json();
-    alert(result.message);
     
+    // Handle conflict - domain is currently blocked
+    if (result.conflict && !force) {
+      const switchConfirm = confirm(
+        `⚠️ ${domain} is currently BLOCKED for ${selectedActivityChild.username}.\n\n` +
+        `Do you want to remove it from the blocklist and ALLOW it instead?`
+      );
+      if (switchConfirm) {
+        return handleActivityAllowDomain(domain, true);
+      }
+      return;
+    }
+    
+    // Handle duplicate
+    if (result.duplicate) {
+      alert(`ℹ️ ${domain} is already allowed.`);
+      return;
+    }
+    
+    if (!result.success) {
+      alert(`Failed: ${result.message}`);
+      return;
+    }
+    
+    alert(`✅ ${result.message}`);
     await loadActivityDashboard();
     
   } catch (error) {

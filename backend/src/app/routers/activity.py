@@ -69,12 +69,16 @@ class DashboardActionRequest(BaseModel):
     action: str = Field(pattern=r"^(block|allow)$")
     target_type: str = Field(pattern=r"^(child|group)$", default="child")
     target_id: Optional[int] = None  # If None, uses child_id
+    force: bool = False  # If True, delete conflicting rule and create new one
 
 
 class DashboardActionResponse(BaseModel):
     success: bool
     message: str
-    rule_id: int
+    rule_id: Optional[int] = None
+    conflict: bool = False  # True if opposite rule exists
+    conflict_rule_type: Optional[str] = None  # "blocklist" or "allowlist"
+    duplicate: bool = False  # True if exact same rule exists
 
 
 # ========== HELPER FUNCTIONS ==========
@@ -548,6 +552,7 @@ async def dashboard_action(action: DashboardActionRequest, current_user: dict = 
     Perform inline action from dashboard: block or allow a domain.
     
     Creates/updates a scoped rule for the child or group.
+    Handles conflicts (blocklist vs allowlist) and duplicates.
     """
     try:
         parent_id = current_user["user_id"]
@@ -561,10 +566,11 @@ async def dashboard_action(action: DashboardActionRequest, current_user: dict = 
         
         # Determine target
         target_id = action.target_id if action.target_id else action.child_id
+        rule_type = "blocklist" if action.action == "block" else "allowlist"
+        opposite_rule_type = "allowlist" if action.action == "block" else "blocklist"
         
         async with async_session() as session:
-            # Check if rule already exists
-            rule_type = "blocklist" if action.action == "block" else "allowlist"
+            # Check if SAME rule type already exists (duplicate check)
             existing_result = await session.execute(
                 select(child_rules).where(
                     and_(
@@ -578,45 +584,84 @@ async def dashboard_action(action: DashboardActionRequest, current_user: dict = 
             existing = existing_result.fetchone()
             
             if existing:
-                # Rule already exists, just enable it
-                stmt = update(child_rules).where(
-                    child_rules.c.id == existing.id
-                ).values(
-                    enabled=True,
-                    updated_at=datetime.utcnow()
+                # Duplicate rule exists
+                if existing.enabled:
+                    return DashboardActionResponse(
+                        success=False,
+                        message=f"Domain {action.domain} is already {rule_type.replace('list', 'ed')}",
+                        rule_id=existing.id,
+                        duplicate=True
+                    )
+                else:
+                    # Rule exists but disabled, just enable it
+                    stmt = update(child_rules).where(
+                        child_rules.c.id == existing.id
+                    ).values(
+                        enabled=True,
+                        updated_at=datetime.utcnow()
+                    )
+                    await session.execute(stmt)
+                    await session.commit()
+                    
+                    return DashboardActionResponse(
+                        success=True,
+                        message=f"Domain {action.domain} {'blocked' if action.action == 'block' else 'allowed'} (rule re-enabled)",
+                        rule_id=existing.id
+                    )
+            
+            # Check if OPPOSITE rule type exists (conflict check)
+            conflict_result = await session.execute(
+                select(child_rules).where(
+                    and_(
+                        child_rules.c.target_type == action.target_type,
+                        child_rules.c.target_id == target_id,
+                        child_rules.c.pattern == action.domain,
+                        child_rules.c.rule_type == opposite_rule_type,
+                        child_rules.c.enabled == True
+                    )
                 )
+            )
+            conflict = conflict_result.fetchone()
+            
+            if conflict and not action.force:
+                # Conflict exists and user hasn't confirmed
+                return DashboardActionResponse(
+                    success=False,
+                    message=f"Domain {action.domain} is currently {opposite_rule_type.replace('list', 'ed')}. Use force=true to switch.",
+                    rule_id=conflict.id,
+                    conflict=True,
+                    conflict_rule_type=opposite_rule_type
+                )
+            
+            if conflict and action.force:
+                # User confirmed, delete the conflicting rule
+                stmt = delete(child_rules).where(child_rules.c.id == conflict.id)
                 await session.execute(stmt)
-                await session.commit()
-                
-                return DashboardActionResponse(
-                    success=True,
-                    message=f"Domain {action.domain} {'blocked' if action.action == 'block' else 'allowed'} (rule re-enabled)",
-                    rule_id=existing.id
-                )
-            else:
-                # Create new rule
-                stmt = insert(child_rules).values(
-                    rule_type=rule_type,
-                    pattern=action.domain,
-                    category="dashboard_action",
-                    explanation=f"Added from activity dashboard by parent",
-                    enabled=True,
-                    target_type=action.target_type,
-                    target_id=target_id,
-                    created_by=parent_id
-                ).returning(child_rules.c.id)
-                
-                result = await session.execute(stmt)
-                await session.commit()
-                rule_id = result.fetchone()[0]
-                
-                logger.info(f"[Activity] Parent {parent_id} created {rule_type} rule for {action.domain} (child {action.child_id})")
-                
-                return DashboardActionResponse(
-                    success=True,
-                    message=f"Domain {action.domain} {'blocked' if action.action == 'block' else 'allowed'}",
-                    rule_id=rule_id
-                )
+                logger.info(f"[Activity] Deleted conflicting {opposite_rule_type} rule for {action.domain}")
+            
+            # Create new rule
+            stmt = insert(child_rules).values(
+                rule_type=rule_type,
+                pattern=action.domain,
+                category="dashboard_action",
+                explanation=f"Added from activity dashboard by parent",
+                enabled=True,
+                target_type=action.target_type,
+                target_id=target_id,
+                created_by=parent_id
+            ).returning(child_rules.c.id)
+            
+            result = await session.execute(stmt)
+            await session.commit()
+            rule_id = result.fetchone()[0]
+            
+            logger.info(f"[Activity] Parent {parent_id} created {rule_type} rule for {action.domain} (child {action.child_id})")
+            
+            return DashboardActionResponse(
+                success=True,
+                message=f"Domain {action.domain} {'blocked' if action.action == 'block' else 'allowed'}",
+                rule_id=rule_id
+            )
                 
     except HTTPException:
         raise

@@ -57,6 +57,7 @@ async def analyze_content(
     """
     Analyze URL and page content for safety using two-layer classification.
     
+    Layer 0 (Allowlist): Check if domain is explicitly allowed - skip all analysis
     Layer 1 (Fast Path): URL tokenization and keyword matching
     Layer 2 (Slow Path): Hugging Face Inference API for content analysis
     
@@ -64,7 +65,7 @@ async def analyze_content(
     - Automatically creates a PERSISTENT blocklist rule for the domain
     - Returns safe=false with action="blocked" and rule_created=true
     
-    If content is safe:
+    If content is safe or allowed:
     - Returns safe=true with action="none"
     
     Error handling (fail-open):
@@ -74,10 +75,32 @@ async def analyze_content(
     blocked_domain = None
     
     try:
+        # Extract domain first
+        domain = extract_domain(request.url)
+        
+        # Layer 0: Check if domain is in the allowlist - if so, skip ALL analysis
+        if domain and current_user["account_type"] == "child":
+            async with async_session() as session:
+                allowlist_result = await session.execute(
+                    select(child_rules).where(
+                        child_rules.c.pattern == domain,
+                        child_rules.c.rule_type == "allowlist",
+                        child_rules.c.target_type == "child",
+                        child_rules.c.target_id == current_user["user_id"],
+                        child_rules.c.enabled == True
+                    )
+                )
+                if allowlist_result.fetchone():
+                    logger.info(f"[Analysis] Domain {domain} is ALLOWLISTED for child {current_user['user_id']} - skipping AI analysis")
+                    return ContentAnalysisResponse(
+                        safe=True,
+                        action="none"
+                    )
+        
         # Truncate text content to 1000 chars to save bandwidth
         text_content = request.text_content[:1000] if request.text_content else ""
         
-        # Run classification
+        # Run classification (Layer 1 & 2)
         result = await classifier.predict(request.url, text_content)
         
         if not result["safe"]:
