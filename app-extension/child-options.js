@@ -193,7 +193,7 @@ function displayXPState(xpState) {
   const neededEl = document.getElementById('xp-needed');
   const barEl = document.getElementById('xp-bar');
   
-  const xpNeeded = 100 * xpState.level;
+  const xpNeeded = 100;  // Each level requires exactly 100 XP
   const progress = (xpState.xp / xpNeeded) * 100;
   const widthPercent = Math.min(progress, 100);
   
