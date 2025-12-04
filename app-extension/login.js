@@ -110,7 +110,10 @@ document.getElementById('parent-login-btn')?.addEventListener('click', async () 
           });
           console.log('[Login] PIN synced from server');
         } else {
-          console.log('[Login] No PIN set on server - will prompt for setup');
+          // IMPORTANT: Clear any existing local PIN since server has none
+          // This prevents old account's PIN from being used on a new account
+          await chrome.storage.local.remove(['gc_pin', 'gc_recovery_codes', 'gc_pin_verified']);
+          console.log('[Login] No PIN set on server - cleared local PIN, will prompt for setup');
         }
       }
     } catch (pinError) {
@@ -178,6 +181,10 @@ document.getElementById('register-btn')?.addEventListener('click', async () => {
     }
     
     const data = await response.json();
+    
+    // IMPORTANT: Clear any existing PIN data from previous accounts
+    // New accounts must set up their own PIN
+    await chrome.storage.local.remove(['gc_pin', 'gc_recovery_codes', 'gc_pin_verified']);
     
     // Store authentication data
     await chrome.storage.local.set({

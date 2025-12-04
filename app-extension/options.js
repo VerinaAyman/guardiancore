@@ -127,8 +127,11 @@ function updateUserDisplay() {
 
 async function handleLogout() {
   try {
+    // Clear ALL user-specific data including PIN and recovery codes
+    // This ensures new accounts don't inherit old account's PIN
     await chrome.storage.local.remove([
-      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username', 'gc_email'
+      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username', 'gc_email',
+      'gc_pin', 'gc_recovery_codes', 'gc_pin_verified'
     ]);
     await chrome.runtime.sendMessage({ type: "LOGOUT" });
     redirectToLogin();

@@ -98,8 +98,10 @@ function updateUserDisplay() {
 
 async function handleLogout() {
   try {
+    // Clear ALL user-specific data including PIN
     await chrome.storage.local.remove([
-      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username', 'gc_email'
+      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username', 'gc_email',
+      'gc_pin', 'gc_recovery_codes', 'gc_pin_verified'
     ]);
     chrome.runtime.sendMessage({ type: "LOGOUT" });
     redirectToLogin();

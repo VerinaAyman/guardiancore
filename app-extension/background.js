@@ -1030,11 +1030,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     initializeAuth().then(() => sendResponse({ ok: true }));
     return true; // Async response
   } else if (message.type === "LOGOUT") {
-    // Handle logout
+    // Handle logout - clear ALL user-specific data including PIN
     currentUser = null;
     rulesCache = { allowlist: [], blocklist: [], time_window: [], lastFetch: 0 };
     chrome.storage.local.remove([
-      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username', 'gc_email'
+      'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username', 'gc_email',
+      'gc_pin', 'gc_recovery_codes', 'gc_pin_verified'
     ]).then(async () => {
       // Open login page only if not already open
       const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('login.html') });
