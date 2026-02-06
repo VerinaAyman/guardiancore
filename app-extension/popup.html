@@ -1,10 +1,267 @@
 <!doctype html>
-<html>
-  <head><meta charset="utf-8"><title>GuardianCore</title></head>
-  <body style="min-width:280px;font-family:sans-serif">
-    <h3>GuardianCore</h3>
-    <button id="ping">Ping Backend</button>
-    <pre id="out"></pre>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GuardianCore</title>
+  <link rel="stylesheet" href="xp.css" />
+    <style>
+      :root {
+        --gc-gradient: linear-gradient(120deg,#4f46e5 0%,#6d28d9 55%,#9333ea 100%);
+        --gc-bg: #0f172a;
+        --gc-panel: #1e293b;
+        --gc-panel-alt: #24324a;
+        --gc-border: #334155;
+        --gc-text: #f1f5f9;
+        --gc-text-dim: #94a3b8;
+        --gc-accent: #6366f1;
+        --gc-accent-soft: rgba(99,102,241,0.15);
+        --gc-danger: #ef4444;
+        --gc-warn: #f59e0b;
+        --gc-success: #10b981;
+        font-synthesis: none;
+      }
+      body {
+        min-width: 380px;max-width:380px;margin:0;padding:0;font-family: system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; background: radial-gradient(circle at 70% 15%,rgba(99,102,241,0.25),transparent 60%) var(--gc-bg); color: var(--gc-text); -webkit-font-smoothing: antialiased;
+      }
+      .header {position:relative;overflow:hidden;padding:18px 20px;text-align:center;background:var(--gc-panel);border-bottom:1px solid var(--gc-border);} 
+      .header:before{content:"";position:absolute;inset:0;background:var(--gc-gradient);opacity:.35;mix-blend-mode:overlay;}
+      .header h2{margin:0;font-size:19px;font-weight:600;letter-spacing:.5px;}
+      .header .subtitle{font-size:11px;margin-top:6px;color:var(--gc-text-dim);text-transform:uppercase;letter-spacing:.12em;}
+      
+      /* User Info Section */
+      .user-info{display:flex;align-items:center;gap:12px;padding:12px 16px;background:var(--gc-panel);border-bottom:1px solid var(--gc-border);}
+      .user-avatar{width:36px;height:36px;border-radius:50%;background:var(--gc-gradient);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:600;color:white;flex-shrink:0;}
+      .user-details{flex:1;min-width:0;}
+      .user-name{font-size:14px;font-weight:600;color:var(--gc-text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+      .user-type{font-size:11px;color:var(--gc-text-dim);text-transform:uppercase;letter-spacing:.05em;margin-top:2px;}
+      .logout-btn{background:transparent;border:none;color:var(--gc-text-dim);padding:6px;border-radius:6px;cursor:pointer;transition:.2s;display:flex;align-items:center;justify-content:center;width:32px;height:32px;flex-shrink:0;}
+      .logout-btn:hover{background:rgba(239,68,68,.15);color:var(--gc-danger);}
+      
+      /* Login Prompt */
+      .login-prompt{text-align:center;padding:40px 20px;background:var(--gc-panel);border-bottom:1px solid var(--gc-border);}
+      .login-icon{font-size:48px;margin-bottom:16px;}
+      .login-prompt p{margin:0 0 16px;color:var(--gc-text-dim);font-size:14px;}
+      .primary-btn{background:var(--gc-accent);color:white;border:none;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:.2s;}
+      .primary-btn:hover{background:#5558e3;box-shadow:0 4px 12px rgba(99,102,241,.4);}
+      
+  .tabs{display:flex;gap:6px;padding:10px 12px;background:linear-gradient(to bottom,rgba(255,255,255,.04),rgba(255,255,255,0));-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);position:sticky;top:0;z-index:10;}
+  .tab{flex:1;padding:10px 6px;text-align:center;cursor:pointer;font-size:12px;font-weight:500;color:var(--gc-text-dim);border:1px solid var(--gc-border);border-radius:8px;background:linear-gradient(to bottom,#1e293b,#162132);transition:.25s cubic-bezier(.4,.2,.2,1);-webkit-user-select:none;user-select:none;}
+  .hidden{display:none !important;}
+      .tab:hover{color:var(--gc-text);border-color:#465671;box-shadow:0 2px 6px -2px rgba(0,0,0,.5);} 
+      .tab.active{background:var(--gc-accent);color:#ffffff;border-color:var(--gc-accent);box-shadow:0 3px 10px -2px rgba(99,102,241,.6);} 
+      .content{padding:14px 14px 18px;} 
+      .tab-content{display:none;animation:fade .35s ease;} 
+      .tab-content.active{display:block;} 
+      @keyframes fade{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+      .section{background:linear-gradient(145deg,#1f2a3b,#192433);border:1px solid var(--gc-border);border-radius:14px;padding:14px 16px;margin:0 0 14px 0;position:relative;overflow:hidden;} 
+      .section:before{content:"";position:absolute;inset:0;background:radial-gradient(circle at 85% 15%,rgba(255,255,255,.08),transparent 60%);pointer-events:none;}
+      .section-title{margin:0 0 10px;font-size:13px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--gc-text-dim);} 
+      .stat-row{display:flex;justify-content:space-between;align-items:center;padding:7px 0;border-bottom:1px dashed #2d3b51;font-size:12.5px;} 
+      .stat-row:last-child{border-bottom:none;} 
+      .stat-label{color:var(--gc-text-dim);font-weight:500;} 
+      .stat-value{font-size:15px;font-weight:600;color:var(--gc-text);} 
+      input,select{width:100%;padding:8px 12px;border:1px solid var(--gc-border);border-radius:8px;background:#0f1a27;color:var(--gc-text);font-size:12.5px;font-family:inherit;transition:.25s;} 
+      input:focus,select:focus{outline:none;border-color:var(--gc-accent);box-shadow:0 0 0 3px var(--gc-accent-soft);} 
+  .readonly-field{cursor:pointer;opacity:.85;position:relative;}
+  .readonly-field:hover{border-color:var(--gc-accent);opacity:1;}
+  .readonly-field:read-only{background:#101d2a;} 
+      button{appearance:none;border:none;padding:10px 14px;border-radius:10px;font-size:12.5px;font-weight:600;cursor:pointer;background:var(--gc-accent);color:#fff;box-shadow:0 4px 14px -4px rgba(99,102,241,.7);transition:.25s;width:100%;letter-spacing:.3px;} 
+      button:hover{transform:translateY(-2px);box-shadow:0 8px 18px -6px rgba(99,102,241,.75);} 
+      button:active{transform:translateY(0);} 
+      button.secondary{background:#334155;box-shadow:none;} 
+      button.secondary:hover{background:#465671;box-shadow:0 4px 14px -4px rgba(0,0,0,.35);} 
+      button:disabled{background:#475569 !important;box-shadow:none;cursor:not-allowed;opacity:.6;} 
+      .blocked-banner{background:linear-gradient(145deg,#3a0d11,#22080b);border:1px solid #7f1d1d;border-radius:12px;padding:12px 14px;margin-bottom:14px;box-shadow:0 4px 10px -4px rgba(0,0,0,.6);} 
+      .blocked-banner .title{color:#fca5a5;font-weight:600;letter-spacing:.5px;font-size:13px;display:flex;align-items:center;gap:6px;} 
+      .blocked-banner .reason{font-size:11.5px;color:#fecaca;margin-top:4px;line-height:1.4;} 
+      .badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:11px;font-weight:600;letter-spacing:.4px;background:#334155;color:var(--gc-text-dim);text-transform:uppercase;} 
+      .badge-success{background:rgba(16,185,129,.15);color:var(--gc-success);} 
+      .badge-warning{background:rgba(245,158,11,.15);color:var(--gc-warn);} 
+      .badge-danger{background:rgba(239,68,68,.15);color:var(--gc-danger);} 
+      .empty-state{text-align:center;padding:30px 10px;color:var(--gc-text-dim);font-size:12.5px;} 
+      .status{margin-top:8px;padding:8px;border-radius:10px;font-size:11.5px;text-align:center;background:#1e293b;color:var(--gc-text-dim);} 
+      .status-success{background:rgba(16,185,129,.15);color:var(--gc-success);} 
+      .status-error{background:rgba(239,68,68,.15);color:var(--gc-danger);} 
+      .status-info{background:rgba(99,102,241,.15);color:var(--gc-accent);} 
+      /* Gamification Week 4 */
+      .gamification-section{background:linear-gradient(145deg,#1f3d2d,#173020) !important;}
+      .gamification-title{color:#86efac !important;}
+      .safe-streak-value{color:#34d399 !important;}
+      .streak-label{font-size:10px;color:#86efac;margin-left:4px;}
+      .risk-low{color:#34d399 !important;}
+      .risk-medium{color:#fbbf24 !important;}
+      .risk-high{color:#ef4444 !important;}
+      .compliant-msg{margin-top:10px;padding:8px;background:rgba(52,211,153,0.1);border-radius:8px;font-size:11px;color:#6ee7b7;text-align:center;}
+      .time-nudge{margin-top:10px;padding:8px;background:rgba(245,158,11,0.15);border-radius:8px;font-size:11px;color:#fbbf24;text-align:center;}
+      .message-warning{background:rgba(239,68,68,0.15) !important;color:#fca5a5 !important;}
+  /* Dev/Test Tools */
+  .risk-breakdown{margin-top:8px;font-size:10.5px;line-height:1.4;color:#6ee7b7;background:rgba(255,255,255,0.05);padding:6px 8px;border-radius:8px;white-space:pre-line;}
+  .dev-tools-grid{display:flex;flex-direction:column;gap:8px;}
+  .dev-inline-row{display:flex;gap:6px;}
+  .flex1{flex:1;}
+  .dev-status{font-size:10px;}
+      footer{margin-top:4px;padding:6px 0 10px;text-align:center;font-size:10px;color:#475569;letter-spacing:.08em;} 
+      footer span{color:#64748b;}
+      @media (prefers-color-scheme: light){body{background:#f1f5f9;color:#0f172a;} .header{background:var(--gc-gradient);} .tab{background:#ffffff;color:#475569;} .section{background:#ffffff;border-color:#e2e8f0;} .badge{background:#e2e8f0;color:#475569;} }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h2>GuardianCore</h2>
+      <div class="subtitle">Parental Control Extension</div>
+    </div>
+    
+    <!-- User Info Section -->
+    <div id="user-info" class="user-info hidden">
+      <div class="user-avatar"></div>
+      <div class="user-details">
+        <div class="user-name" id="user-name">Loading...</div>
+        <div class="user-type" id="user-type"></div>
+      </div>
+      <button id="logout-btn" class="logout-btn" title="Logout">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+          <polyline points="16 17 21 12 16 7"></polyline>
+          <line x1="21" y1="12" x2="9" y2="12"></line>
+        </svg>
+      </button>
+    </div>
+    
+    <!-- Login Prompt (shown when not authenticated) -->
+    <div id="login-prompt" class="login-prompt hidden">
+      <div class="login-icon">🔒</div>
+      <p>Please log in to use GuardianCore</p>
+      <button id="open-login-btn" class="primary-btn">Go to Login</button>
+    </div>    <div class="tabs">
+      <div class="tab active" data-tab="status">Status</div>
+      <div class="tab" data-tab="stats">Stats</div>
+      <div class="tab" data-tab="settings">Settings</div>
+    </div>
+
+    <div class="content">
+      <!-- Status Tab -->
+      <div class="tab-content active" id="status-tab">
+        <!-- Gamification Cues (Week 4) -->
+        <div class="section gamification-section">
+          <h3 class="section-title gamification-title">🎯 Your Activity</h3>
+          <!-- Legacy Safe Streak & Risk Score removed: XP is now the sole gamification metric -->
+          <div class="stat-row">
+            <span class="stat-label">Level</span>
+            <span class="stat-value" id="xp-level">1</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Daily XP</span>
+            <span class="stat-value" id="xp-value">0</span>
+          </div>
+          <div id="xp-bar" class="xp-bar">
+            <div id="xp-bar-fill" class="xp-bar-fill"></div>
+          </div>
+          <div id="xp-remaining" class="xp-remaining">100 XP to next level</div>
+          <div id="xp-how" class="xp-how">
+            <strong>How you earn XP:</strong>
+            <ul>
+              <li>+1 per page load</li>
+              <li>+2 if site has CSP</li>
+              <li>+1 if CORS headers present</li>
+              <li>+3 if 0 trackers detected</li>
+              <li><strong>-0.5</strong> per tracker (up to -2.5)</li>
+              <li>-5 if a page is blocked / violation</li>
+              <li>Fast Mode (dev) multiplies XP by 3</li>
+            </ul>
+            Level up every 100 XP. XP resets daily; level persists.
+          </div>
+        </div>
+        
+        <div id="blocked-banner" class="blocked-banner hidden">
+          <div class="title">🛡️ Content Blocked</div>
+          <div class="reason" id="blocked-reason"></div>
+        </div>
+
+        <div class="section">
+          <h3 class="section-title">Current Page</h3>
+          <div class="stat-row">
+            <span class="stat-label">Trackers Detected</span>
+            <span class="stat-value" id="current-trackers">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">CSP Protection</span>
+            <span class="badge" id="current-csp">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">CORS Signals</span>
+            <span class="badge" id="current-cors">-</span>
+          </div>
+        </div>
+
+        <!-- Active Rules section removed for security - don't show rules to child -->
+      </div>
+
+      <!-- Stats Tab -->
+      <div class="tab-content" id="stats-tab">
+        <div class="section">
+          <h3 class="section-title">Audit Statistics</h3>
+          <div class="stat-row">
+            <span class="stat-label">Total Audits</span>
+            <span class="stat-value" id="stat-total">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Unique Origins</span>
+            <span class="stat-value" id="stat-unique">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Avg Trackers</span>
+            <span class="stat-value" id="stat-trackers">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">CSP Coverage</span>
+            <span class="stat-value" id="stat-csp">-</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">CORS Coverage</span>
+            <span class="stat-value" id="stat-cors">-</span>
+          </div>
+        </div>
+
+        <button id="refresh-stats">Refresh Statistics</button>
+      </div>
+
+      <!-- Settings Tab -->
+      <div class="tab-content" id="settings-tab">
+        <div class="section">
+          <h3 class="section-title">Backend Configuration</h3>
+          <div class="form-group">
+            <label>Backend URL</label>
+            <input type="text" id="backend-url" placeholder="http://localhost:8000">
+          </div>
+          <div class="form-group">
+            <label>API Token</label>
+            <input type="password" id="api-token" placeholder="dev-token-123">
+          </div>
+          <button id="save-settings">Save Settings</button>
+          <div class="status hidden" id="settings-status"></div>
+        </div>
+
+        <div class="section">
+          <h3 class="section-title">Actions</h3>
+          <button id="refresh-rules" class="secondary">Refresh Rules</button>
+        </div>
+
+        <!-- Dev/Test Tools (hidden unless unlocked) -->
+        <div class="section hidden" id="dev-tools">
+          <h3 class="section-title">Dev/Test Tools</h3>
+          <div class="dev-tools-grid">
+            <button id="dev-toggle-fast" class="secondary">Enable Fast Mode</button>
+            <button id="dev-violation" class="secondary">Simulate Violation (XP Penalty)</button>
+            <button id="dev-reset-xp" class="secondary">Reset XP</button>
+            <div id="dev-status" class="status hidden dev-status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Script must remain last to keep layout stable -->
     <script src="popup.js"></script>
+    <footer><span>GuardianCore</span> • privacy-first controls</footer>
   </body>
 </html>

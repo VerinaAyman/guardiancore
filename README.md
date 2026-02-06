@@ -679,6 +679,23 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
+## 🎯 Roadmap
+
+### Phase 7 (Planned)
+- [ ] Export functionality (CSV/JSON)
+- [ ] Activity charts and trends
+- [ ] Email summaries
+- [ ] Mobile app support
+
+### Phase 8 (Future)
+- [ ] Multi-device sync
+- [ ] Advanced analytics
+- [ ] Anomaly detection
+- [ ] Peer benchmarking
+- [ ] WebAuthn passwordless auth
+
+---
+
 ## 🙏 Acknowledgments
 
 - FastAPI for the excellent web framework

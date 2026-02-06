@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GuardianCore - My Account</title>
+  <link rel="stylesheet" href="xp.css">
+  <style>
+    :root {
+      --gc-bg: #0f172a;
+      --gc-shell: radial-gradient(circle at 65% 15%,#312e81 0%,#1e1b4b 45%,#0f172a 85%);
+      --gc-accent: #6366f1;
+      --gc-accent-rgb: 99,102,241;
+      --gc-accent-alt: #8b5cf6;
+      --gc-danger: #ef4444;
+      --gc-warn: #f59e0b;
+      --gc-success: #10b981;
+      --gc-text: #f1f5f9;
+      --gc-text-dim: #94a3b8;
+      --gc-border: #283345;
+      --gc-panel: #1e293b;
+      --gc-radius: 14px;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui,-apple-system,'Segoe UI',Roboto,sans-serif; background: var(--gc-shell); min-height:100vh; padding:30px 20px;color:var(--gc-text); -webkit-font-smoothing:antialiased; }
+    
+    .container { max-width: 1200px; margin:0 auto; background:linear-gradient(145deg,#1b2736,#14202c); border:1px solid #233244; border-radius:var(--gc-radius); box-shadow:0 20px 60px -25px rgba(0,0,0,.65); overflow:hidden; position:relative; }
+    .container:before { content:""; position:absolute; inset:0; background:radial-gradient(circle at 85% 8%,rgba(255,255,255,.12),transparent 60%); pointer-events:none; mix-blend-mode:overlay; }
+
+    /* Header */
+    .header { position:relative; padding:32px 32px 28px; background:linear-gradient(120deg,#312e81,#1e1b4b); display:flex; justify-content:space-between; align-items:center; }
+    .header:after{content:"";position:absolute;inset:0;background:linear-gradient(140deg,rgba(99,102,241,.35),rgba(139,92,246,.25));mix-blend-mode:overlay;opacity:.75;}
+    .header-left { position:relative; z-index:1; display:flex; align-items:center; gap:15px; }
+    .header h1 { font-size:28px;margin:0 0 6px;font-weight:650;letter-spacing:.5px;background:linear-gradient(90deg,#ffffff,#c7d2fe);-webkit-background-clip:text;background-clip:text;color:transparent; }
+    .header .subtitle { font-size:13px; letter-spacing:.1em; text-transform:uppercase; color:var(--gc-text-dim); font-weight:500; }
+    .header-right { position:relative; z-index:1; display:flex; gap:12px; align-items:center; }
+    .user-badge { display:flex; align-items:center; gap:10px; padding:8px 14px; background:rgba(255,255,255,.1); border-radius:10px; border:1px solid rgba(255,255,255,.15); }
+    .user-avatar { width:32px; height:32px; border-radius:50%; background:linear-gradient(135deg,#6366f1,#8b5cf6); display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:600; color:white; }
+    .user-info { display:flex; flex-direction:column; }
+    .user-name { font-size:14px; font-weight:600; color:white; }
+    .user-type { font-size:11px; color:rgba(255,255,255,.7); text-transform:uppercase; }
+    .logout-btn { background:rgba(239,68,68,.2); border:1px solid rgba(239,68,68,.4); color:white; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:13px; font-weight:600; transition:.2s; }
+    .logout-btn:hover { background:var(--gc-danger); border-color:var(--gc-danger); }
+
+    /* Tabs */
+    .tabs { display:flex; gap:4px; padding:0 32px; background:rgba(0,0,0,.2); border-bottom:1px solid var(--gc-border); }
+    .tab { padding:14px 20px; cursor:pointer; font-size:14px; font-weight:600; color:var(--gc-text-dim); border-bottom:3px solid transparent; transition:.2s; border:none; background:transparent; flex:1; }
+    .tab:hover { color:var(--gc-text); }
+    .tab.active { color:var(--gc-accent); border-bottom-color:var(--gc-accent); }
+
+    /* Content */
+    .content { padding:32px; }
+    .tab-content { display:none; }
+    .tab-content.active { display:block; animation:fadeIn .3s ease; }
+    @keyframes fadeIn { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+    
+    /* Cards */
+    .card { background:linear-gradient(145deg,#182331,#131c27); border:1px solid #2a3a4c; border-radius:12px; padding:20px; margin-bottom:16px; position:relative; overflow:hidden; }
+    .card:before { content:""; position:absolute; inset:0; background:radial-gradient(circle at 88% 12%,rgba(255,255,255,.08),transparent 70%); pointer-events:none; }
+    .card-title { font-size:18px; font-weight:600; color:#e2e8f0; margin-bottom:15px; }
+
+    .info-grid { display:grid; gap:15px; }
+    .info-item { display:flex; flex-direction:column; gap:5px; }
+    .info-label { font-size:13px; font-weight:600; letter-spacing:.05em; text-transform:uppercase; color:var(--gc-text-dim); display:block; margin-bottom:6px; }
+    .info-value { font-size:16px; color:var(--gc-text); font-weight:500; }
+    .code-display { font-family:'Courier New',monospace; font-size:24px; font-weight:700; letter-spacing:4px; color:var(--gc-accent); text-align:center; padding:16px; background:rgba(99,102,241,.1); border-radius:10px; margin:12px 0; display:inline-block; }
+
+    /* XP/Level Display */
+    .xp-display { background:linear-gradient(135deg,#6366f1,#8b5cf6); border-radius:12px; padding:25px; color:white; margin-bottom:20px; position:relative; overflow:hidden; }
+    .xp-display:before { content:""; position:absolute; inset:0; background:radial-gradient(circle at 88% 12%,rgba(255,255,255,.15),transparent 70%); pointer-events:none; }
+    .xp-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:15px; position:relative; z-index:1; }
+    .xp-level { font-size:32px; font-weight:bold; }
+    .xp-points { font-size:18px; opacity:.9; }
+    .xp-bar-container { background:rgba(255,255,255,.2); border-radius:10px; height:20px; overflow:hidden; margin-bottom:10px; position:relative; z-index:1; }
+    .xp-bar { background:rgba(255,255,255,.9); height:100%; border-radius:10px; transition:width .3s ease; }
+    .xp-text { font-size:13px; opacity:.8; position:relative; z-index:1; }
+    .xp-trophy { font-size:48px; }
+
+    /* Stats Grid */
+    .stats-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:15px; margin-top:20px; }
+    .stat-card { background:rgba(99,102,241,.1); border:1px solid rgba(99,102,241,.25); border-radius:10px; padding:20px; text-align:center; }
+    .stat-value { font-size:32px; font-weight:bold; color:var(--gc-accent); margin-bottom:5px; }
+    .stat-label { font-size:13px; color:var(--gc-text-dim); text-transform:uppercase; letter-spacing:.5px; }
+
+    /* Tips Section */
+    .tips-section { background:linear-gradient(135deg,#6366f1,#8b5cf6); border-radius:12px; padding:25px; color:white; margin-bottom:20px; position:relative; overflow:hidden; }
+    .tips-section:before { content:""; position:absolute; inset:0; background:radial-gradient(circle at 88% 12%,rgba(255,255,255,.15),transparent 70%); pointer-events:none; }
+    .tips-title { font-size:20px; font-weight:600; margin-bottom:15px; display:flex; align-items:center; gap:10px; position:relative; z-index:1; }
+    .tip-item { background:rgba(255,255,255,.1); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); border-radius:8px; padding:15px; margin-bottom:12px; border:1px solid rgba(255,255,255,.2); position:relative; z-index:1; }
+    .tip-item:last-child { margin-bottom:0; }
+    .tip-icon { font-size:24px; margin-bottom:8px; }
+    .tip-text { font-size:14px; line-height:1.5; opacity:.95; }
+    .tip-text strong { font-weight:600; }
+
+    /* Badges */
+    .badge { display:inline-block; padding:4px 10px; font-size:11px; font-weight:600; border-radius:20px; letter-spacing:.05em; text-transform:uppercase; }
+    .badge-child { background:rgba(99,102,241,.15); color:#818cf8; border:1px solid rgba(99,102,241,.35); }
+    
+    /* Utility */
+    .hidden { display:none !important; }
+    .text-dim { color:var(--gc-text-dim); line-height:1.6; }
+    .text-dim-mb { color:var(--gc-text-dim); line-height:1.6; margin-bottom:15px; }
+    
+    /* Loading state */
+    .loading { text-align:center; padding:40px; color:rgba(255,255,255,.8); }
+    .loading-spinner { display:inline-block; width:40px; height:40px; border:4px solid rgba(255,255,255,.3); border-top-color:white; border-radius:50%; animation:spin 1s linear infinite; }
+    @keyframes spin { to { transform:rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-left">
+        <h1>GuardianCore</h1>
+        <div class="subtitle">Child Dashboard</div>
+      </div>
+      <div class="header-right">
+        <div class="user-badge">
+          <div class="user-avatar" id="user-avatar">C</div>
+          <div class="user-info">
+            <div class="user-name" id="user-name">Loading...</div>
+            <div class="user-type">Child</div>
+          </div>
+        </div>
+        <button class="logout-btn" id="logout-btn">Logout</button>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-tab="profile">👤 Profile</button>
+      <button class="tab" data-tab="stats">📊 Stats</button>
+      <button class="tab" data-tab="about">💡 About</button>
+    </div>
+
+    <!-- Profile Tab -->
+    <div id="profile-tab" class="tab-content active">
+      <div class="card">
+        <h3 class="card-title">Account Information</h3>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Username</span>
+            <span class="info-value" id="profile-username">Loading...</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Access Code</span>
+            <div class="code-display" id="profile-code">------</div>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Parent Account</span>
+            <span class="info-value" id="profile-parent">Loading...</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Account Type</span>
+            <span class="badge badge-child">Child Account</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title">About This Account</h3>
+        <p class="text-dim">
+          Your account is managed by your parent. They can set rules and monitor your activity
+          to help keep you safe online. If you have questions about your account settings,
+          please talk to your parent.
+        </p>
+      </div>
+
+      <!-- Activity Tracking Notice -->
+      <div id="tracking-notice" class="card" style="display: none; border: 2px solid #f59e0b; background: linear-gradient(145deg, #2c1d0f, #1f1509);">
+        <h3 class="card-title" style="color: #fbbf24;">📊 Activity Tracking Notice</h3>
+        <p class="text-dim-mb">
+          Your parent has enabled activity tracking for your account. This helps them understand your browsing habits and set fair rules.
+        </p>
+        <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 8px; padding: 15px; margin-bottom: 15px;">
+          <div style="font-weight: 600; margin-bottom: 10px; color: #fbbf24;">What is collected:</div>
+          <ul style="margin: 0 0 0 20px; padding: 0; color: var(--gc-text-dim); line-height: 1.8;">
+            <li>Which websites you visit (domain level only, e.g., "youtube.com")</li>
+            <li>How long you spend on each website</li>
+            <li>Basic security settings (CSP/CORS presence)</li>
+            <li>Blocked access attempts</li>
+          </ul>
+        </div>
+        <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 8px; padding: 15px;">
+          <div style="font-weight: 600; margin-bottom: 10px; color: #10b981;">What is NOT collected:</div>
+          <ul style="margin: 0 0 0 20px; padding: 0; color: var(--gc-text-dim); line-height: 1.8;">
+            <li>Full URLs (specific pages you visit)</li>
+            <li>Messages you send or receive</li>
+            <li>Page content or text you read</li>
+            <li>Passwords or personal information</li>
+            <li>Form data you enter</li>
+          </ul>
+        </div>
+        <p class="text-dim" style="margin-top: 15px; font-size: 13px;">
+          📅 Data is automatically deleted after 3 days for your privacy.<br>
+          🔒 This information is only visible to your parent and helps them keep you safe online.
+        </p>
+      </div>
+    </div>
+
+    <!-- Stats Tab -->
+    <div id="stats-tab" class="tab-content">
+      <div class="xp-display">
+        <div class="xp-header">
+          <div>
+            <div class="xp-level">Level <span id="xp-level">1</span></div>
+            <div class="xp-points"><span id="xp-current">0</span> / <span id="xp-needed">100</span> XP</div>
+          </div>
+          <div class="xp-trophy">🏆</div>
+        </div>
+        <div class="xp-bar-container">
+          <div class="xp-bar" id="xp-bar" style="width: 0%;"></div>
+        </div>
+        <div class="xp-text">Keep browsing safely to earn more XP!</div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title">Browsing Statistics</h3>
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="stat-total-audits">0</div>
+            <div class="stat-label">Total Audits</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-unique-origins">0</div>
+            <div class="stat-label">Unique Origins</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-avg-trackers">0</div>
+            <div class="stat-label">Avg Trackers</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-csp-coverage">0%</div>
+            <div class="stat-label">CSP Coverage</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-cors-coverage">0%</div>
+            <div class="stat-label">CORS Coverage</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- About Tab -->
+    <div id="about-tab" class="tab-content">
+      <div class="tips-section">
+        <h3 class="tips-title">
+          <span>💡</span>
+          <span>Tips for Safe Browsing</span>
+        </h3>
+        
+        <div class="tip-item">
+          <div class="tip-icon">🔒</div>
+          <div class="tip-text">
+            <strong>Protect Your Information:</strong> Never share your personal information, 
+            passwords, or access codes with anyone online, even if they seem friendly.
+          </div>
+        </div>
+
+        <div class="tip-item">
+          <div class="tip-icon">👨‍👩‍👧‍👦</div>
+          <div class="tip-text">
+            <strong>Talk to Your Parents:</strong> If you see something online that makes you 
+            uncomfortable or confused, always tell your parents or a trusted adult.
+          </div>
+        </div>
+
+        <div class="tip-item">
+          <div class="tip-icon">🎯</div>
+          <div class="tip-text">
+            <strong>Stay Focused:</strong> Use the internet for learning and positive activities. 
+            Your rules are here to help you make good choices.
+          </div>
+        </div>
+
+        <div class="tip-item">
+          <div class="tip-icon">🌟</div>
+          <div class="tip-text">
+            <strong>Be Kind Online:</strong> Treat others online the same way you'd want to be 
+            treated. Cyberbullying is never okay.
+          </div>
+        </div>
+
+        <div class="tip-item">
+          <div class="tip-icon">⏰</div>
+          <div class="tip-text">
+            <strong>Balance Your Time:</strong> Remember to take breaks from screens. Spend time 
+            with family, play outside, and do activities you enjoy offline.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 class="card-title">About GuardianCore</h3>
+        <p class="text-dim-mb">
+          GuardianCore is a parental control system designed to help keep you safe online while 
+          you explore and learn. The rules set by your parent are meant to guide you toward 
+          positive online experiences.
+        </p>
+        <p class="text-dim">
+          <strong>Questions or concerns?</strong> Your parent is the administrator of your account. 
+          They can adjust your settings and answer any questions you have about how GuardianCore works.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="child-options.js"></script>
+</body>
+</html>
