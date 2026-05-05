@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: gc_user
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: guardiancore
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gc_user -d guardiancore"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    ports:
+      - "8000:8000"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+ 
+  GROQ_API_KEY=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

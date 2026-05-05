@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>GuardianLens — Page Blocked</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #090c1a;
+      --surface:   #0e1229;
+      --card:      #161b35;
+      --border:    #252c52;
+      --accent:    #4a7cff;
+      --accent2:   #7b5ea7;
+      --danger:    #ff4d6d;
+      --warn:      #ffa94d;
+      --ok:        #43e97b;
+      --text:      #e8edf8;
+      --muted:     #7a85ad;
+      --radius:    18px;
+      --radius-sm: 10px;
+      --shadow:    0 8px 40px rgba(0,0,0,0.55);
+    }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+
+    .bg-mesh {
+      position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none;
+    }
+    .bg-mesh::before {
+      content: '';
+      position: absolute;
+      width: 700px; height: 700px;
+      background: radial-gradient(circle, rgba(74,124,255,0.13) 0%, transparent 70%);
+      top: -200px; left: -100px;
+      animation: drift1 12s ease-in-out infinite alternate;
+    }
+    .bg-mesh::after {
+      content: '';
+      position: absolute;
+      width: 500px; height: 500px;
+      background: radial-gradient(circle, rgba(123,94,167,0.12) 0%, transparent 70%);
+      bottom: -150px; right: -80px;
+      animation: drift2 14s ease-in-out infinite alternate;
+    }
+    @keyframes drift1 { to { transform: translate(60px, 80px); } }
+    @keyframes drift2 { to { transform: translate(-60px, -60px); } }
+
+    .grid-overlay {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(74,124,255,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(74,124,255,0.04) 1px, transparent 1px);
+      background-size: 44px 44px;
+    }
+
+    .layout {
+      position: relative; z-index: 1;
+      display: flex; gap: 22px; align-items: flex-start;
+      max-width: 900px; width: 100%; padding: 24px;
+      animation: fadeUp 0.55s cubic-bezier(0.22,1,0.36,1) both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(32px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    /* ── Block Card ── */
+    .block-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 28px 24px;
+      flex: 1; min-width: 290px;
+      box-shadow: var(--shadow);
+      display: flex; flex-direction: column; gap: 18px;
+    }
+
+    .shield-wrap { display: flex; align-items: center; gap: 12px; }
+    .shield-icon {
+      width: 50px; height: 50px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 24px; flex-shrink: 0;
+      box-shadow: 0 0 24px rgba(74,124,255,0.35);
+      animation: shieldPulse 2.8s ease-in-out infinite;
+    }
+    @keyframes shieldPulse {
+      0%,100% { box-shadow: 0 0 24px rgba(74,124,255,0.3); }
+      50%      { box-shadow: 0 0 40px rgba(74,124,255,0.6); }
+    }
+    .brand-name { font-size: 13px; font-weight: 700; color: var(--accent); letter-spacing: .08em; text-transform: uppercase; }
+    .brand-sub  { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(255,77,109,0.10); border: 1px solid rgba(255,77,109,0.28);
+      border-radius: 20px; padding: 4px 12px;
+      font-size: 11px; font-weight: 600; color: var(--danger);
+      text-transform: uppercase; letter-spacing: .06em; width: fit-content;
+    }
+    .live-dot {
+      width: 7px; height: 7px; background: var(--danger); border-radius: 50%;
+      animation: blink 1.2s ease-in-out infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.15} }
+
+    .block-title { font-size: 21px; font-weight: 700; line-height: 1.25; }
+    .block-title span { color: var(--danger); }
+    .block-desc { font-size: 13px; color: var(--muted); line-height: 1.65; margin-top: 6px; }
+
+    .info-row { display: flex; flex-direction: column; gap: 7px; }
+    .info-chip {
+      display: flex; align-items: center; gap: 10px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 8px 13px; font-size: 12px;
+    }
+    .info-chip .lbl { color: var(--muted); min-width: 60px; }
+    .info-chip .val { color: var(--text); font-weight: 500; word-break: break-all; }
+    .chip-danger .val { color: var(--danger); }
+    .chip-warn .val   { color: var(--warn); }
+
+    /* Stage tracker */
+    .stage-section-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }
+    .stage-row { display: flex; align-items: center; }
+    .stage-item { display: flex; flex-direction: column; align-items: center; gap: 5px; flex: 1; position: relative; }
+    .stage-item:not(:last-child)::after {
+      content: ''; position: absolute; top: 10px; left: 55%; width: 90%; height: 2px;
+      background: var(--border); z-index: 0;
+    }
+    .stage-item.active:not(:last-child)::after  { background: var(--accent); }
+    .stage-dot { width: 20px; height: 20px; border-radius: 50%; background: var(--border); border: 2px solid var(--border); z-index: 1; }
+    .stage-item.active  .stage-dot { background: var(--accent);  border-color: var(--accent);  box-shadow: 0 0 10px rgba(74,124,255,0.5); }
+    .stage-item.current .stage-dot { background: var(--danger);  border-color: var(--danger);  box-shadow: 0 0 10px rgba(255,77,109,0.5); }
+    .stage-lbl { font-size: 10px; color: var(--muted); text-align: center; }
+    .stage-item.active .stage-lbl, .stage-item.current .stage-lbl { color: var(--text); }
+
+    /* Escalation */
+    .escalate-btn {
+      width: 100%; padding: 11px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none; border-radius: var(--radius-sm);
+      color: #fff; font-size: 13px; font-weight: 600; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 7px;
+      transition: opacity .2s, transform .15s;
+    }
+    .escalate-btn:hover { opacity: .86; transform: translateY(-1px); }
+
+    .escalate-panel {
+      display: none; flex-direction: column; gap: 9px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 13px;
+    }
+    .escalate-panel.open { display: flex; }
+    .escalate-panel label { font-size: 12px; color: var(--muted); }
+    .escalate-panel textarea {
+      background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+      padding: 9px; color: var(--text); font-size: 12.5px; resize: none; height: 68px;
+      font-family: inherit; outline: none;
+    }
+    .escalate-panel textarea:focus { border-color: var(--accent); }
+    .send-btn {
+      padding: 8px 14px; background: var(--accent); border: none; border-radius: 8px;
+      color: #fff; font-size: 12.5px; font-weight: 600; cursor: pointer; align-self: flex-end;
+      transition: opacity .2s;
+    }
+    .send-btn:hover { opacity: .85; }
+    .send-confirm { display: none; font-size: 12px; color: var(--ok); text-align: center; }
+
+    /* ── Chat Card ── */
+    .chat-card {
+      background: var(--card); border: 1px solid var(--border);
+      border-radius: var(--radius); width: 300px; flex-shrink: 0;
+      box-shadow: var(--shadow); display: flex; flex-direction: column; height: 490px;
+      animation: fadeUp 0.55s 0.1s cubic-bezier(0.22,1,0.36,1) both;
+    }
+
+    .chat-header {
+      padding: 14px 16px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .chat-avatar {
+      width: 34px; height: 34px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 17px; flex-shrink: 0;
+    }
+    .chat-hname { font-size: 13px; font-weight: 600; }
+    .chat-hstatus {
+      font-size: 11px; color: var(--ok);
+      display: flex; align-items: center; gap: 5px;
+    }
+    .chat-hstatus::before {
+      content: ''; width: 6px; height: 6px; background: var(--ok); border-radius: 50%;
+    }
+
+    .chat-messages {
+      flex: 1; overflow-y: auto; padding: 13px;
+      display: flex; flex-direction: column; gap: 9px;
+      scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+    }
+
+    .msg {
+      max-width: 87%; padding: 9px 12px; border-radius: 12px;
+      font-size: 12.5px; line-height: 1.55;
+      animation: msgIn 0.25s ease both;
+    }
+    @keyframes msgIn {
+      from { opacity:0; transform: translateY(5px); }
+      to   { opacity:1; transform: translateY(0); }
+    }
+    .msg-bot  { background: var(--surface); border: 1px solid var(--border); align-self: flex-start; border-bottom-left-radius: 4px; }
+    .msg-user { background: linear-gradient(135deg, var(--accent), var(--accent2)); align-self: flex-end; border-bottom-right-radius: 4px; color:#fff; }
+
+    .typing-indicator {
+      display: flex; gap: 4px; padding: 10px 12px;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; border-bottom-left-radius: 4px;
+      width: fit-content; align-self: flex-start;
+    }
+    .typing-indicator span {
+      width: 6px; height: 6px; background: var(--muted); border-radius: 50%;
+      animation: dot 1.2s ease-in-out infinite;
+    }
+    .typing-indicator span:nth-child(2) { animation-delay: .2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: .4s; }
+    @keyframes dot { 0%,80%,100%{transform:scale(.7);opacity:.4} 40%{transform:scale(1);opacity:1} }
+
+    .quick-replies { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+    .qr-btn {
+      padding: 4px 10px; background: transparent;
+      border: 1px solid var(--accent); border-radius: 20px;
+      color: var(--accent); font-size: 11px; cursor: pointer;
+      transition: all .18s; font-family: inherit;
+    }
+    .qr-btn:hover { background: var(--accent); color: #fff; }
+
+    .chat-input-row {
+      padding: 11px 13px; border-top: 1px solid var(--border);
+      display: flex; gap: 7px; align-items: center;
+    }
+    .chat-input {
+      flex: 1; background: var(--surface); border: 1px solid var(--border);
+      border-radius: 20px; padding: 8px 13px;
+      color: var(--text); font-size: 12.5px; font-family: inherit; outline: none;
+      transition: border-color .2s;
+    }
+    .chat-input:focus { border-color: var(--accent); }
+    .chat-input::placeholder { color: var(--muted); }
+    .chat-send {
+      width: 34px; height: 34px; flex-shrink: 0;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border: none; border-radius: 50%; color: #fff; font-size: 14px; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform .15s;
+    }
+    .chat-send:hover { transform: scale(1.09); }
+
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+    @media (max-width: 680px) {
+      .layout { flex-direction: column; padding: 14px; }
+      .chat-card { width: 100%; height: 320px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="bg-mesh"></div>
+<div class="grid-overlay"></div>
+
+<div class="layout">
+
+  <!-- BLOCK CARD -->
+  <div class="block-card">
+
+    <div class="shield-wrap">
+      <div class="shield-icon">🛡️</div>
+      <div>
+        <div class="brand-name">GuardianLens</div>
+        <div class="brand-sub">Family Protection Active</div>
+      </div>
+    </div>
+
+    <div class="live-badge"><span class="live-dot"></span>Access Blocked</div>
+
+    <div>
+      <div class="block-title">This page was <span>blocked</span><br>for your protection.</div>
+      <div class="block-desc">GuardianLens detected content that doesn't meet your family's safety settings. Your parent has been notified.</div>
+    </div>
+
+    <div class="info-row">
+      <div class="info-chip chip-danger">
+        <span class="lbl">Category</span>
+        <span class="val" id="chip-cat">—</span>
+      </div>
+      <div class="info-chip chip-warn">
+        <span class="lbl">Reason</span>
+        <span class="val" id="chip-reason">—</span>
+      </div>
+      <div class="info-chip">
+        <span class="lbl">URL</span>
+        <span class="val" id="chip-url">—</span>
+      </div>
+    </div>
+
+    <div>
+      <div class="stage-section-label">Protection Stage</div>
+      <div class="stage-row">
+        <div class="stage-item" id="s1"><div class="stage-dot"></div><div class="stage-lbl">Monitoring</div></div>
+        <div class="stage-item" id="s2"><div class="stage-dot"></div><div class="stage-lbl">Warning</div></div>
+        <div class="stage-item" id="s3"><div class="stage-dot"></div><div class="stage-lbl">Blocked</div></div>
+      </div>
+    </div>
+
+    <button class="escalate-btn" onclick="toggleEscalate()">✉️ Ask parent to unlock</button>
+    <div class="escalate-panel" id="escalate-panel">
+      <label>Leave a note for your parent:</label>
+      <textarea id="escalate-note" placeholder="Why do you need access to this page?"></textarea>
+      <button class="send-btn" id="send-btn" onclick="sendEscalation()">Send Request</button>
+      <div class="send-confirm" id="send-confirm">✅ Request sent! Your parent will review it.</div>
+    </div>
+
+  </div>
+
+  <!-- CHAT CARD -->
+  <div class="chat-card">
+    <div class="chat-header">
+      <div class="chat-avatar">🤖</div>
+      <div>
+        <div class="chat-hname">Lens Copilot</div>
+        <div class="chat-hstatus">Online</div>
+      </div>
+    </div>
+    <div class="chat-messages" id="chat-msgs"></div>
+    <div class="chat-input-row">
+      <input class="chat-input" id="chat-input" placeholder="Ask me anything…" onkeydown="if(event.key==='Enter')sendMsg()"/>
+      <button class="chat-send" onclick="sendMsg()">➤</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const p = new URLSearchParams(location.search);
+  const cat    = p.get('category') || 'Blocked Content';
+  const reason = p.get('reason')   || 'Restricted by family settings';
+  const url    = p.get('url')      || document.referrer || 'Unknown';
+  const stage  = parseInt(p.get('stage') || '3', 10);
+
+  document.getElementById('chip-cat').textContent    = cat;
+  document.getElementById('chip-reason').textContent = reason;
+  const u = url.length > 42 ? url.slice(0,42)+'…' : url;
+  document.getElementById('chip-url').textContent    = u;
+
+  // Stage dots
+  for (let i = 1; i <= 3; i++) {
+    const el = document.getElementById('s'+i);
+    if (i < stage)  el.classList.add('active');
+    if (i === stage) el.classList.add('current');
+  }
+
+  // Escalation
+  function toggleEscalate() {
+    document.getElementById('escalate-panel').classList.toggle('open');
+  }
+  function sendEscalation() {
+    const note = document.getElementById('escalate-note').value.trim();
+    document.getElementById('send-confirm').style.display = 'block';
+    document.getElementById('send-btn').disabled = true;
+    try {
+      chrome.runtime.sendMessage({ type: 'LENS_ESCALATE', url, category: cat, note });
+      chrome.runtime.sendMessage({ type: 'PAGE_BLOCKED',  url, category: cat, note });
+    } catch(e) {}
+    botReply('📨 Your unlock request has been sent to your parent. They\'ll review it soon!');
+  }
+
+  // Chat
+  const msgs = document.getElementById('chat-msgs');
+
+  function appendMsg(role, text, qrs) {
+    const d = document.createElement('div');
+    d.className = 'msg msg-' + role;
+    d.textContent = text;
+    msgs.appendChild(d);
+    if (qrs) {
+      const row = document.createElement('div');
+      row.className = 'quick-replies';
+      qrs.forEach(q => {
+        const b = document.createElement('button');
+        b.className = 'qr-btn'; b.textContent = q;
+        b.onclick = () => { row.remove(); handleInput(q); };
+        row.appendChild(b);
+      });
+      msgs.appendChild(row);
+    }
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function botReply(text, qrs) {
+    const t = document.createElement('div');
+    t.className = 'typing-indicator';
+    t.innerHTML = '<span></span><span></span><span></span>';
+    msgs.appendChild(t);
+    msgs.scrollTop = msgs.scrollHeight;
+    setTimeout(() => {
+      t.remove();
+      appendMsg('bot', text, qrs);
+    }, 850 + Math.random() * 450);
+  }
+
+  function handleInput(text) {
+    appendMsg('user', text);
+    const l = text.toLowerCase();
+    if (l.includes('why') || l.includes('block') || l.includes('reason')) {
+      botReply(`This page was flagged as "${cat}". Your family's safety settings don't allow this type of content.`);
+    } else if (l.includes('parent') || l.includes('unlock') || l.includes('access')) {
+      botReply('Tap the "Ask parent to unlock" button on the left, write them a note, and hit Send. They\'ll get a notification right away! 📲');
+    } else if (l.includes('guardian') || l.includes('what is') || l.includes('lens')) {
+      botReply('GuardianLens is a family safety extension that blocks harmful content and keeps your parents informed about your browsing. 🛡️');
+    } else if (l.includes('back') || l.includes('home') || l.includes('go')) {
+      botReply('Hit your browser\'s back button or close this tab to return somewhere safe. 😊');
+    } else {
+      botReply('I\'m here to help! You can ask me why this page was blocked, how to request access from your parent, or what GuardianLens does.',
+        ['Why was this blocked?', 'Ask my parent', 'Go back safely']);
+    }
+  }
+
+  function sendMsg() {
+    const inp = document.getElementById('chat-input');
+    const t = inp.value.trim();
+    if (!t) return;
+    inp.value = '';
+    handleInput(t);
+  }
+
+  // Boot
+  setTimeout(() => {
+    appendMsg('bot',
+      `👋 Hi! I'm Lens Copilot. This page was blocked because of "${cat}". How can I help?`,
+      ['Why was this blocked?', 'Ask my parent to unlock', 'Go back safely']
+    );
+  }, 700);
+</script>
+</body>
+</html>
