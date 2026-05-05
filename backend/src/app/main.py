@@ -14,6 +14,7 @@ from .config import settings
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 from .routers import notify
+from .routers.dnsprofile import router as dnsprofile_router
 
 try:
     from .routers.lens import lens_router
@@ -42,7 +43,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
+# Include routers 
+app.include_router(dnsprofile_router)
 app.include_router(health.router)
 app.include_router(audit_router)
 app.include_router(rules_router)
