@@ -6,8 +6,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Create async engine and session
-engine = create_async_engine(settings.database_url, echo=False, future=True, pool_pre_ping=True)
-async_session = async_sessionmaker(engine, expire_on_commit=False)
+engine = create_async_engine(
+    settings.database_url,
+    echo=False,
+    future=True,
+    pool_pre_ping=True,
+    pool_size=3,
+    max_overflow=2,
+    pool_timeout=30,
+    pool_recycle=1800,
+)
 
 # Define metadata and tables
 metadata = MetaData()
