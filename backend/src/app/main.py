@@ -7,7 +7,8 @@ from .routers.webauthn import router as webauthn_router
 from .routers.auth import router as auth_router
 from .routers.accounts import router as accounts_router
 from .routers.activity import router as activity_router
-from .routers.analysis import router as analysis_router
+from .routers.analysis import router as analysis_router 
+from .routers.checkurl import router as checkurl_router
 from .db import init_db, cleanup_old_activity_events, cleanup_old_activity_summaries, aggregate_activity_summaries
 from .config import settings
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,8 +50,9 @@ app.include_router(risk_router)
 app.include_router(webauthn_router)
 app.include_router(auth_router)
 app.include_router(accounts_router)
-app.include_router(activity_router)
-app.include_router(analysis_router)
+app.include_router(activity_router) 
+app.include_router(analysis_router) 
+app.include_router(checkurl_router)
 app.include_router(notify.router)
 if LENS_ROUTER_AVAILABLE and lens_router is not None:
     app.include_router(lens_router)
