@@ -34,10 +34,8 @@ MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
                 <key>DNSProtocol</key>
                 <string>HTTPS</string>
                 <key>ServerURL</key>
-                <string>https://dns.nextdns.io/{config_id}</string>
-                <key>ServerName</key>
-                <string>dns.nextdns.io</string>
-            </dict>
+<string>https://guardiancore-production.up.railway.app/dns-profile/query</string>                <key>ServerName</key>
+<string>guardiancore-production.up.railway.app</string>            </dict>
             <key>PayloadDescription</key>
             <string>GuardianLens DNS filter for {username}</string>
             <key>PayloadDisplayName</key>
