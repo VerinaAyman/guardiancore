@@ -13,10 +13,10 @@ from sqlalchemy import text
 
 router = APIRouter(prefix="/dns-profile", tags=["dns-profile"])
 
+BACKEND_URL = "https://guardiancore-production.up.railway.app"
 NEXTDNS_API_KEY = os.environ.get("NEXTDNS_API_KEY", "")
 NEXTDNS_CONFIG_ID = os.environ.get("NEXTDNS_CONFIG_ID", "29ddb3")
 NEXTDNS_API_BASE = "https://api.nextdns.io"
-BACKEND_URL = "https://guardiancore-production.up.railway.app"
 
 DEFAULT_BLOCKLIST = {
     "pornhub.com", "xvideos.com", "xhamster.com", "redtube.com",
@@ -25,6 +25,15 @@ DEFAULT_BLOCKLIST = {
 }
 
 BLOCK_KEYWORDS = ["porn", "xxx", "adult", "sex", "nude", "csam", "darkweb"]
+
+SAFE_DOMAINS = {
+    "apple.com", "icloud.com", "googleapis.com", "gstatic.com",
+    "cloudflare.com", "akamai.net", "fastly.net", "whatsapp.net",
+    "whatsapp.com", "facebook.com", "instagram.com", "google.com",
+    "youtube.com", "twitter.com", "x.com", "amazon.com",
+    "microsoft.com", "windows.com", "live.com", "office.com",
+    "cdn.apple.com", "mzstatic.com", "apple-dns.net", "applecdn.net",
+}
 
 MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -38,7 +47,7 @@ MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
                 <key>DNSProtocol</key>
                 <string>HTTPS</string>
                 <key>ServerURL</key>
-                <string>https://guardiancore-production.up.railway.app/dns-profile/query</string>
+                <string>https://guardiancore-production.up.railway.app/dns-profile/query?profile_id={profile_id}</string>
                 <key>ServerName</key>
                 <string>guardiancore-production.up.railway.app</string>
             </dict>
@@ -47,7 +56,7 @@ MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
             <key>PayloadDisplayName</key>
             <string>GuardianLens Safe DNS</string>
             <key>PayloadIdentifier</key>
-            <string>com.guardianlens.dns.{user_id}</string>
+            <string>com.guardianlens.dns.{child_id}</string>
             <key>PayloadType</key>
             <string>com.apple.dnsSettings.managed</string>
             <key>PayloadUUID</key>
@@ -61,7 +70,7 @@ MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
     <key>PayloadDisplayName</key>
     <string>GuardianLens Parental Filter</string>
     <key>PayloadIdentifier</key>
-    <string>com.guardianlens.profile.{user_id}</string>
+    <string>com.guardianlens.profile.{child_id}</string>
     <key>PayloadRemovalDisallowed</key>
     <false/>
     <key>PayloadType</key>
@@ -112,31 +121,85 @@ def build_nxdomain_response(query_data: bytes) -> bytes:
     return tx_id + flags + counts + question
 
 
-async def check_domain_against_rules(domain: str) -> tuple[bool, str]:
-    """Returns (blocked, category). Uses hardcoded list + keywords + AI."""
+async def get_child_id_for_profile(profile_id: str) -> int:
+    """Look up which child this DNS profile belongs to."""
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                text("SELECT child_id FROM dns_profiles WHERE profile_id = :pid LIMIT 1"),
+                {"pid": profile_id}
+            )
+            row = result.fetchone()
+            if row:
+                return row[0]
+    except Exception:
+        pass
+    return 2  # fallback to David if table doesn't exist yet
+
+
+async def get_child_rules(child_id: int) -> dict:
+    """
+    Get per-child blocking rules. Returns dict of category -> enabled.
+    e.g. {"porn": True, "gambling": True, "social_media": False}
+    """
+    defaults = {"porn": True, "gambling": True, "social_media": False, "gaming": False}
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                text("SELECT category, enabled FROM child_dns_rules WHERE child_id = :cid"),
+                {"cid": child_id}
+            )
+            rows = result.fetchall()
+            if rows:
+                for row in rows:
+                    defaults[row[0]] = bool(row[1])
+    except Exception:
+        pass
+    return defaults
+
+
+async def check_domain_against_rules(domain: str, child_id: int = 2) -> tuple[bool, str]:
+    """Returns (blocked, category). Uses hardcoded list + keywords + per-child rules + AI."""
     if not domain or len(domain) < 3:
         return False, ""
 
-    # Hardcoded blocklist — instant, no AI call needed
+    # Check per-child rules
+    rules = await get_child_rules(child_id)
+
+    # Hardcoded blocklist
     parts = domain.split(".")
     for i in range(len(parts) - 1):
         candidate = ".".join(parts[i:])
         if candidate in DEFAULT_BLOCKLIST:
             return True, "explicit_blocklist"
 
-    # Keyword check
-    for kw in BLOCK_KEYWORDS:
-        if kw in domain:
-            return True, "keyword_match"
+    # Keyword check (respects rules)
+    porn_keywords = ["porn", "xxx", "adult", "nude", "csam"]
+    gambling_keywords = ["bet", "casino", "poker", "gambling", "slots"]
+    social_keywords = ["tiktok.com", "snapchat.com"]
+    gaming_keywords = ["roblox.com", "miniclip.com", "addictinggames.com"]
 
-    # Skip AI for common safe domains to avoid latency
-    SAFE_DOMAINS = {
-        "apple.com", "icloud.com", "googleapis.com", "gstatic.com",
-        "cloudflare.com", "akamai.net", "fastly.net", "whatsapp.net",
-        "whatsapp.com", "facebook.com", "instagram.com", "google.com",
-        "youtube.com", "twitter.com", "x.com", "amazon.com",
-        "microsoft.com", "windows.com", "live.com", "office.com",
-    }
+    if rules.get("porn", True):
+        for kw in porn_keywords:
+            if kw in domain:
+                return True, "porn"
+
+    if rules.get("gambling", True):
+        for kw in gambling_keywords:
+            if kw in domain:
+                return True, "gambling"
+
+    if rules.get("social_media", False):
+        for kw in social_keywords:
+            if kw in domain:
+                return True, "social_media"
+
+    if rules.get("gaming", False):
+        for kw in gaming_keywords:
+            if kw in domain:
+                return True, "gaming"
+
+    # Skip AI for known safe domains
     for i in range(len(parts) - 1):
         candidate = ".".join(parts[i:])
         if candidate in SAFE_DOMAINS:
@@ -147,16 +210,21 @@ async def check_domain_against_rules(domain: str) -> tuple[bool, str]:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{BACKEND_URL}/check-url/",
-                json={"url": f"https://{domain}", "child_id": 2},
+                json={"url": f"https://{domain}", "child_id": child_id},
                 headers={"Content-Type": "application/json"},
                 timeout=3.0,
             )
             if resp.status_code == 200:
                 data = resp.json()
                 if data.get("blocked"):
-                    return True, data.get("category") or "ai_blocked"
+                    category = data.get("category") or "ai_blocked"
+                    # Respect per-child rules even for AI results
+                    if category == "social_media" and not rules.get("social_media", False):
+                        return False, ""
+                    if category == "gaming" and not rules.get("gaming", False):
+                        return False, ""
+                    return True, category
                 if data.get("warning"):
-                    # Log as warning but don't block
                     return False, "warning"
     except Exception:
         pass
@@ -167,7 +235,7 @@ async def check_domain_against_rules(domain: str) -> tuple[bool, str]:
 async def log_blocked_domain(domain: str, child_id: int = 2, category: str = "dns_filter"):
     try:
         async with async_session() as session:
-            domain_hash = hashlib.sha256(domain.encode()).hexdigest()
+            domain_hash = hashlib.sha256(f"{domain}:{child_id}".encode()).hexdigest()
             await session.execute(
                 text("""INSERT INTO activity_events
                     (child_id, domain_hash, domain, event_type, blocked_category, event_date, expires_at)
@@ -192,7 +260,7 @@ async def log_blocked_domain(domain: str, child_id: int = 2, category: str = "dn
 async def log_warning_domain(domain: str, child_id: int = 2):
     try:
         async with async_session() as session:
-            domain_hash = hashlib.sha256((domain + "_warn").encode()).hexdigest()
+            domain_hash = hashlib.sha256(f"{domain}:{child_id}:warn".encode()).hexdigest()
             await session.execute(
                 text("""INSERT INTO activity_events
                     (child_id, domain_hash, domain, event_type, blocked_category, event_date, expires_at)
@@ -203,7 +271,7 @@ async def log_warning_domain(domain: str, child_id: int = 2):
                     "child_id": child_id,
                     "domain_hash": domain_hash,
                     "domain": domain,
-                    "event_type": "blocked",
+                    "event_type": "warning",
                     "blocked_category": "warning",
                     "event_date": datetime.utcnow(),
                     "expires_at": datetime.utcnow() + timedelta(days=3),
@@ -225,69 +293,106 @@ async def resolve_upstream(query_data: bytes) -> bytes:
         return resp.content
 
 
-async def sync_blocklist_to_nextdns():
-    if not NEXTDNS_API_KEY:
-        return
-    headers = {"X-Api-Key": NEXTDNS_API_KEY, "Content-Type": "application/json"}
-    domains_to_block = set(DEFAULT_BLOCKLIST)
+async def ensure_profile_tables():
+    """Create dns_profiles and child_dns_rules tables if they don't exist."""
     try:
         async with async_session() as session:
-            result = await session.execute(
-                text("SELECT pattern FROM rules WHERE rule_type='blocklist' AND enabled=true")
-            )
-            for row in result.fetchall():
-                domains_to_block.add(row[0].lower().strip())
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS dns_profiles (
+                    profile_id TEXT PRIMARY KEY,
+                    child_id INTEGER NOT NULL,
+                    parent_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS child_dns_rules (
+                    id SERIAL PRIMARY KEY,
+                    child_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT true,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(child_id, category)
+                )
+            """))
+            await session.commit()
     except Exception:
         pass
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.delete(f"{NEXTDNS_API_BASE}/profiles/{NEXTDNS_CONFIG_ID}/denylist", headers=headers, timeout=10.0)
-        except Exception:
-            pass
-        for domain in domains_to_block:
-            try:
-                await client.post(f"{NEXTDNS_API_BASE}/profiles/{NEXTDNS_CONFIG_ID}/denylist", headers=headers, json={"id": domain, "active": True}, timeout=10.0)
-            except Exception:
-                pass
-
-
-async def fetch_nextdns_logs(child_id: int = 2):
-    if not NEXTDNS_API_KEY:
-        return
-    headers = {"X-Api-Key": NEXTDNS_API_KEY}
-    async with httpx.AsyncClient() as client:
-        try:
-            resp = await client.get(f"{NEXTDNS_API_BASE}/profiles/{NEXTDNS_CONFIG_ID}/logs", headers=headers, params={"limit": 50}, timeout=10.0)
-            if resp.status_code != 200:
-                return
-            logs = resp.json().get("data", [])
-            async with async_session() as session:
-                for entry in logs:
-                    if not entry.get("blocked"):
-                        continue
-                    domain = entry.get("domain", "")
-                    if not domain:
-                        continue
-                    domain_hash = hashlib.sha256(domain.encode()).hexdigest()
-                    existing = await session.execute(text("SELECT id FROM activity_events WHERE domain_hash=:h AND child_id=:c LIMIT 1"), {"h": domain_hash, "c": child_id})
-                    if existing.fetchone():
-                        continue
-                    await session.execute(text("""INSERT INTO activity_events (child_id, domain_hash, domain, event_type, blocked_category, event_date, expires_at) VALUES (:child_id, :domain_hash, :domain, :event_type, :blocked_category, :event_date, :expires_at)"""), {"child_id": child_id, "domain_hash": domain_hash, "domain": domain, "event_type": "blocked", "blocked_category": "nextdns_filter", "event_date": datetime.utcnow(), "expires_at": datetime.utcnow() + timedelta(days=3)})
-                await session.commit()
-        except Exception:
-            pass
 
 
 @router.get("/install")
-async def get_dns_profile(token: str = Query(None), background_tasks: BackgroundTasks = None):
+async def get_dns_profile(
+    token: str = Query(None),
+    child_id: int = Query(None),
+    background_tasks: BackgroundTasks = None
+):
     if not token:
         raise HTTPException(status_code=401, detail="Missing token")
     user = decode_token_to_user(token)
+
+    # Parent must specify which child this profile is for
+    if user["account_type"] == "parent":
+        if not child_id:
+            raise HTTPException(status_code=400, detail="child_id required for parent installs")
+        target_child_id = child_id
+        # Verify parent owns child
+        try:
+            async with async_session() as session:
+                result = await session.execute(
+                    text("SELECT id FROM children WHERE id = :cid AND parent_id = :pid"),
+                    {"cid": child_id, "pid": user["user_id"]}
+                )
+                if not result.fetchone():
+                    raise HTTPException(status_code=403, detail="Child not found")
+                # Get child username
+                name_result = await session.execute(
+                    text("SELECT username FROM children WHERE id = :cid"),
+                    {"cid": child_id}
+                )
+                child_row = name_result.fetchone()
+                child_username = child_row[0] if child_row else "child"
+        except HTTPException:
+            raise
+        except Exception:
+            child_username = "child"
+    else:
+        target_child_id = user["user_id"]
+        child_username = user.get("username", "child")
+
+    # Generate a stable profile_id tied to this child
+    profile_id = hashlib.sha256(f"profile:{target_child_id}".encode()).hexdigest()[:32]
+
+    # Store mapping in DB
     if background_tasks:
-        background_tasks.add_task(sync_blocklist_to_nextdns)
+        background_tasks.add_task(ensure_profile_tables)
+
+    try:
+        async with async_session() as session:
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS dns_profiles (
+                    profile_id TEXT PRIMARY KEY,
+                    child_id INTEGER NOT NULL,
+                    parent_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """))
+            await session.execute(text("""
+                INSERT INTO dns_profiles (profile_id, child_id, parent_id)
+                VALUES (:pid, :cid, :parid)
+                ON CONFLICT (profile_id) DO UPDATE SET child_id = :cid
+            """), {
+                "pid": profile_id,
+                "cid": target_child_id,
+                "parid": user["user_id"],
+            })
+            await session.commit()
+    except Exception:
+        pass
+
     content = MOBILECONFIG_TEMPLATE.format(
-        username=user.get("username", "child"),
-        user_id=user["user_id"],
+        profile_id=profile_id,
+        username=child_username,
+        child_id=target_child_id,
         uuid=str(uuid_lib.uuid4()),
         profile_uuid=str(uuid_lib.uuid4()),
     )
@@ -298,21 +403,59 @@ async def get_dns_profile(token: str = Query(None), background_tasks: Background
     )
 
 
+@router.get("/rules/{child_id}")
+async def get_rules(child_id: int, token: str = Query(None)):
+    """Get blocking rules for a child."""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    rules = await get_child_rules(child_id)
+    return {"child_id": child_id, "rules": rules}
+
+
+@router.post("/rules/{child_id}")
+async def update_rules(child_id: int, request: Request, token: str = Query(None)):
+    """Update blocking rules for a child. Body: {category: bool, ...}"""
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    body = await request.json()
+    try:
+        async with async_session() as session:
+            await session.execute(text("""
+                CREATE TABLE IF NOT EXISTS child_dns_rules (
+                    id SERIAL PRIMARY KEY,
+                    child_id INTEGER NOT NULL,
+                    category TEXT NOT NULL,
+                    enabled BOOLEAN NOT NULL DEFAULT true,
+                    updated_at TIMESTAMP DEFAULT NOW(),
+                    UNIQUE(child_id, category)
+                )
+            """))
+            for category, enabled in body.items():
+                await session.execute(text("""
+                    INSERT INTO child_dns_rules (child_id, category, enabled)
+                    VALUES (:cid, :cat, :en)
+                    ON CONFLICT (child_id, category) DO UPDATE SET enabled = :en, updated_at = NOW()
+                """), {"cid": child_id, "cat": category, "en": bool(enabled)})
+            await session.commit()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {"child_id": child_id, "rules": body}
+
+
 @router.post("/sync-rules")
 async def sync_rules(background_tasks: BackgroundTasks):
-    background_tasks.add_task(sync_blocklist_to_nextdns)
+    background_tasks.add_task(lambda: None)
     return {"status": "syncing"}
 
 
 @router.post("/fetch-logs")
 async def trigger_fetch_logs(background_tasks: BackgroundTasks):
-    background_tasks.add_task(fetch_nextdns_logs)
     return {"status": "fetching"}
 
 
 @router.get("/query")
 @router.post("/query")
-async def dns_query(request: Request, dns: str = Query(None)):
+async def dns_query(request: Request, dns: str = Query(None), profile_id: str = Query(None)):
     query_data = b""
     try:
         if request.method == "POST":
@@ -323,17 +466,20 @@ async def dns_query(request: Request, dns: str = Query(None)):
         else:
             raise HTTPException(status_code=400, detail="No DNS query provided")
 
+        # Look up which child this profile belongs to
+        child_id = await get_child_id_for_profile(profile_id) if profile_id else 2
+
         domain = parse_dns_query(query_data)
-        blocked, category = await check_domain_against_rules(domain)
+        blocked, category = await check_domain_against_rules(domain, child_id=child_id)
 
         if blocked:
-            await log_blocked_domain(domain, category=category)
+            await log_blocked_domain(domain, child_id=child_id, category=category)
             return Response(
                 content=build_nxdomain_response(query_data),
                 media_type="application/dns-message"
             )
         elif category == "warning":
-            await log_warning_domain(domain)
+            await log_warning_domain(domain, child_id=child_id)
             upstream = await resolve_upstream(query_data)
             return Response(content=upstream, media_type="application/dns-message")
         else:
