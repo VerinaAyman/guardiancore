@@ -324,9 +324,9 @@ async def update_activity_settings(settings: ActivitySettingsUpdate, current_use
 
 @router.get("/dashboard/{child_id}", response_model=DashboardResponse)
 async def get_activity_dashboard(
-    child_id: int, 
+    child_id: int,
     days: int = 7,
-    current_user: dict = Depends(require_parent)
+    current_user: dict = Depends(get_current_user)
 ):
     """
     Get activity dashboard data for a child (parent only).
@@ -343,14 +343,22 @@ async def get_activity_dashboard(
     - Parent-only access with PIN verification
     """
     try:
-        parent_id = current_user["user_id"]
-        
-        # Verify parent owns child
-        if not await verify_parent_owns_child(parent_id, child_id):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have permission to access this child's dashboard"
-            )
+        # Allow parent OR child themselves to access dashboard
+        if current_user["account_type"] == "parent":
+            parent_id = current_user["user_id"]
+            if not await verify_parent_owns_child(parent_id, child_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You do not have permission to access this child's dashboard"
+                )
+        elif current_user["account_type"] == "child":
+            if current_user["user_id"] != child_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Children can only view their own dashboard"
+                )
+        else:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
         
         async with async_session() as session:
             # Get child info
