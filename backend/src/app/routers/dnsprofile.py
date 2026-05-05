@@ -69,15 +69,10 @@ def decode_token_to_user(token: str) -> dict:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 @router.get("/install")
-async def get_dns_profile(
-    token: str = Query(None),                          # ?token= from Linking.openURL
-    current_user: dict = Depends(get_current_user),   # Authorization header fallback
-):
-    # Prefer query-param token (Safari can't send headers)
-    if token:
-        user = decode_token_to_user(token)
-    else:
-        user = current_user
+async def get_dns_profile(token: str = Query(None)):
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing token")
+    user = decode_token_to_user(token)
 
     content = MOBILECONFIG_TEMPLATE.format(
         backend_url=BACKEND_URL,
