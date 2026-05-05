@@ -13,7 +13,9 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=5,
     max_overflow=0,
-)
+) 
+async_session = async_sessionmaker(engine, expire_on_commit=False)
+
 # Define metadata and tables
 metadata = MetaData()
 
