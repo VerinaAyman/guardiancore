@@ -216,8 +216,109 @@ async def trigger_fetch_logs(background_tasks: BackgroundTasks):
     background_tasks.add_task(fetch_nextdns_logs)
     return {"status": "fetching"}
 
+def parse_dns_query(data: bytes) -> str:
+    try:
+        pos = 12
+        labels = []
+        while pos < len(data):
+            length = data[pos]
+            if length == 0:
+                break
+            pos += 1
+            labels.append(data[pos:pos + length].decode())
+            pos += length
+        return ".".join(labels).lower()
+    except Exception:
+        return ""
+
+
+def build_nxdomain_response(query_data: bytes) -> bytes:
+    tx_id = query_data[:2]
+    flags = b'\x81\x83'
+    counts = b'\x00\x01\x00\x00\x00\x00\x00\x00'
+    question = query_data[12:]
+    return tx_id + flags + counts + question
+
+
+def is_domain_blocked(domain: str) -> bool:
+    if not domain:
+        return False
+    parts = domain.split(".")
+    for i in range(len(parts) - 1):
+        candidate = ".".join(parts[i:])
+        if candidate in DEFAULT_BLOCKLIST:
+            return True
+    for kw in ["porn", "xxx", "adult", "sex", "nude", "csam", "darkweb"]:
+        if kw in domain:
+            return True
+    return False
+
+
+async def log_blocked_domain(domain: str, child_id: int = 2):
+    try:
+        async with async_session() as session:
+            domain_hash = hashlib.sha256(domain.encode()).hexdigest()
+            await session.execute(
+                text("""INSERT INTO activity_events
+                    (child_id, domain_hash, domain, event_type, blocked_category, event_date, expires_at)
+                    VALUES (:child_id, :domain_hash, :domain, :event_type, :blocked_category, :event_date, :expires_at)
+                    ON CONFLICT DO NOTHING
+                """),
+                {
+                    "child_id": child_id,
+                    "domain_hash": domain_hash,
+                    "domain": domain,
+                    "event_type": "blocked",
+                    "blocked_category": "dns_filter",
+                    "event_date": datetime.utcnow(),
+                    "expires_at": datetime.utcnow() + timedelta(days=3),
+                }
+            )
+            await session.commit()
+    except Exception:
+        pass
+
+
+async def resolve_upstream(query_data: bytes) -> bytes:
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            "https://8.8.8.8/dns-query",
+            content=query_data,
+            headers={"Content-Type": "application/dns-message"},
+            timeout=5.0,
+        )
+        return resp.content
+
 
 @router.get("/query")
 @router.post("/query")
-async def dns_query_stub():
-    return {"status": "GuardianLens DNS active via NextDNS"}
+async def dns_query(request: Request, dns: str = Query(None)):
+    import base64
+    try:
+        if request.method == "POST":
+            query_data = await request.body()
+        elif dns:
+            padding = 4 - len(dns) % 4
+            query_data = base64.urlsafe_b64decode(dns + "=" * padding)
+        else:
+            raise HTTPException(status_code=400, detail="No DNS query provided")
+
+        domain = parse_dns_query(query_data)
+        blocked = is_domain_blocked(domain)
+
+        if blocked:
+            await log_blocked_domain(domain)
+            return Response(
+                content=build_nxdomain_response(query_data),
+                media_type="application/dns-message"
+            )
+        else:
+            upstream = await resolve_upstream(query_data)
+            return Response(content=upstream, media_type="application/dns-message")
+
+    except Exception as e:
+        try:
+            upstream = await resolve_upstream(query_data)
+            return Response(content=upstream, media_type="application/dns-message")
+        except Exception:
+            raise HTTPException(status_code=500, detail=str(e))
