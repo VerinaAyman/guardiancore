@@ -1,22 +1,27 @@
 import uuid as uuid_lib
-import struct
 import base64
-from fastapi import APIRouter, Depends, Query, HTTPException, Request
+import hashlib
+from datetime import datetime, timedelta
+from fastapi import APIRouter, Query, HTTPException, Request
 from fastapi.responses import Response
 import jwt as pyjwt
 from ..routers.auth import JWT_SECRET, JWT_ALGORITHM
-from ..db import async_session
-from sqlalchemy import select, text
+from ..db import async_session, rules, activity_events
+from sqlalchemy import select, insert
 
 router = APIRouter(prefix="/dns-profile", tags=["dns-profile"])
 BACKEND_URL = "https://guardiancore-production.up.railway.app"
 
-# Hardcoded blocklist for now — we'll hook into DB rules next
 BLOCKLIST = {
     "pornhub.com", "xvideos.com", "xhamster.com", "redtube.com",
     "youporn.com", "tube8.com", "spankbang.com", "xnxx.com",
     "1xbet.com", "bet365.com", "pokerstars.com",
 }
+
+BLOCK_KEYWORDS = [
+    "porn", "xxx", "adult", "sex", "nude",
+    "child-abuse", "csam", "terrorism", "jihad", "darkweb",
+]
 
 MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -81,9 +86,7 @@ def decode_token_to_user(token: str) -> dict:
 
 
 def parse_dns_query(data: bytes) -> str:
-    """Extract domain name from DNS wire format query."""
     try:
-        # Skip 12-byte header
         pos = 12
         labels = []
         while pos < len(data):
@@ -91,7 +94,7 @@ def parse_dns_query(data: bytes) -> str:
             if length == 0:
                 break
             pos += 1
-            labels.append(data[pos:pos+length].decode())
+            labels.append(data[pos:pos + length].decode())
             pos += length
         return ".".join(labels).lower()
     except Exception:
@@ -99,25 +102,14 @@ def parse_dns_query(data: bytes) -> str:
 
 
 def build_nxdomain_response(query_data: bytes) -> bytes:
-    """Build a DNS NXDOMAIN response to block a domain."""
-    # Copy transaction ID from query
     tx_id = query_data[:2]
-    # Flags: response, NXDOMAIN (rcode=3)
     flags = b'\x81\x83'
-    # 1 question, 0 answers, 0 authority, 0 additional
     counts = b'\x00\x01\x00\x00\x00\x00\x00\x00'
-    # Copy question section from query (everything after 12-byte header)
     question = query_data[12:]
     return tx_id + flags + counts + question
 
 
-def build_passthrough_response(query_data: bytes, upstream_response: bytes) -> bytes:
-    """Return the upstream DNS response as-is."""
-    return upstream_response
-
-
 async def resolve_upstream(query_data: bytes) -> bytes:
-    """Forward DNS query to Google's DoH server."""
     import httpx
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -129,16 +121,54 @@ async def resolve_upstream(query_data: bytes) -> bytes:
         return resp.content
 
 
-def is_blocked(domain: str) -> bool:
-    """Check if domain or any parent domain is in blocklist."""
+async def check_domain_against_rules(domain: str) -> bool:
     if not domain:
         return False
+
+    # Check hardcoded blocklist
     parts = domain.split(".")
     for i in range(len(parts) - 1):
         candidate = ".".join(parts[i:])
         if candidate in BLOCKLIST:
             return True
+
+    # Check keywords
+    for kw in BLOCK_KEYWORDS:
+        if kw in domain:
+            return True
+
+    # Check DB rules
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(rules).where(rules.c.enabled == True)
+            )
+            for rule in result.fetchall():
+                if rule.rule_type == "blocklist":
+                    pattern = rule.pattern.lower().strip()
+                    if pattern == domain or domain.endswith("." + pattern):
+                        return True
+    except Exception:
+        pass
+
     return False
+
+
+async def log_dns_block(domain: str):
+    try:
+        async with async_session() as session:
+            await session.execute(insert(activity_events).values(
+                child_id=2,
+                domain_hash=hashlib.sha256(domain.encode()).hexdigest(),
+                domain=domain,
+                event_type="blocked",
+                blocked_category="dns_filter",
+                event_date=datetime.utcnow(),
+                expires_at=datetime.utcnow() + timedelta(days=3)
+            ))
+            await session.commit()
+    except Exception:
+        pass
 
 
 @router.get("/install")
@@ -163,42 +193,30 @@ async def get_dns_profile(token: str = Query(None)):
 @router.post("/query")
 @router.get("/query")
 async def dns_query(request: Request, dns: str = Query(None)):
-    """
-    DNS-over-HTTPS endpoint. Handles both GET (?dns=base64) and POST (binary body).
-    Blocks domains in BLOCKLIST, forwards everything else to Google DNS.
-    """
     try:
-        # Parse query data
         if request.method == "POST":
             query_data = await request.body()
         elif dns:
-            # GET request with base64url-encoded DNS query
             query_data = base64.urlsafe_b64decode(dns + "==")
         else:
             raise HTTPException(status_code=400, detail="No DNS query provided")
 
-        # Extract domain
         domain = parse_dns_query(query_data)
+        blocked = await check_domain_against_rules(domain)
 
-        if is_blocked(domain):
-            # Return NXDOMAIN to block the domain
-            response_data = build_nxdomain_response(query_data)
+        if blocked:
+            await log_dns_block(domain)
             return Response(
-                content=response_data,
+                content=build_nxdomain_response(query_data),
                 media_type="application/dns-message"
             )
         else:
-            # Forward to Google DNS
             upstream = await resolve_upstream(query_data)
-            return Response(
-                content=upstream,
-                media_type="application/dns-message"
-            )
+            return Response(content=upstream, media_type="application/dns-message")
 
     except HTTPException:
         raise
     except Exception as e:
-        # On any error, fail open (allow) so we don't break internet
         try:
             upstream = await resolve_upstream(query_data)
             return Response(content=upstream, media_type="application/dns-message")
