@@ -1,6 +1,6 @@
 """Activity tracking router for GDPR-compliant parental dashboard."""
 
-from fastapi import APIRouter, HTTPException, status, Depends
+from fastapi import APIRouter, HTTPException, status, Depends,Query
 from pydantic import BaseModel, Field
 from typing import Optional, List
 from datetime import datetime, timedelta
