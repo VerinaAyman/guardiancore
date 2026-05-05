@@ -1,6 +1,8 @@
-from fastapi import APIRouter, Depends
+import uuid as uuid_lib
+from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import Response
-from ..routers.auth import get_current_user
+from jose import jwt, JWTError
+from ..routers.auth import get_current_user, SECRET_KEY, ALGORITHM
 
 router = APIRouter(prefix="/dns-profile", tags=["dns-profile"])
 
@@ -53,21 +55,43 @@ MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>"""
 
+
+def decode_token_to_user(token: str) -> dict:
+    """Decode a raw JWT string into a user dict — same logic as get_current_user."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return {
+            "user_id": payload.get("user_id") or payload.get("sub"),
+            "username": payload.get("username", "child"),
+            "account_type": payload.get("account_type", "child"),
+        }
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
 @router.get("/install")
-async def get_dns_profile(current_user: dict = Depends(get_current_user)):
-    import uuid
+async def get_dns_profile(
+    token: str = Query(None),                          # ?token= from Linking.openURL
+    current_user: dict = Depends(get_current_user),   # Authorization header fallback
+):
+    # Prefer query-param token (Safari can't send headers)
+    if token:
+        user = decode_token_to_user(token)
+    else:
+        user = current_user
+
     content = MOBILECONFIG_TEMPLATE.format(
         backend_url=BACKEND_URL,
-        username=current_user.get("username", "child"),
-        user_id=current_user["user_id"],
-        uuid=str(uuid.uuid4()),
-        profile_uuid=str(uuid.uuid4()),
+        username=user.get("username", "child"),
+        user_id=user["user_id"],
+        uuid=str(uuid_lib.uuid4()),
+        profile_uuid=str(uuid_lib.uuid4()),
     )
     return Response(
         content=content,
         media_type="application/x-apple-aspen-config",
         headers={
-            "Content-Disposition": f'attachment; filename="guardianlens.mobileconfig"'
+            "Content-Disposition": 'attachment; filename="guardianlens.mobileconfig"'
         }
     )
 
@@ -76,6 +100,6 @@ async def get_dns_profile(current_user: dict = Depends(get_current_user)):
 async def dns_query():
     """
     Placeholder DoH endpoint.
-    Real DoH requires binary DNS wire format - this confirms the route exists.
+    Real DoH requires binary DNS wire format — this confirms the route exists.
     """
     return {"status": "GuardianLens DNS active"}
