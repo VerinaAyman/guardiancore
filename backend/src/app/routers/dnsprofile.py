@@ -2,8 +2,7 @@ import uuid as uuid_lib
 from fastapi import APIRouter, Depends, Query, HTTPException
 from fastapi.responses import Response
 from jose import jwt, JWTError
-from ..routers.auth import get_current_user, SECRET_KEY, ALGORITHM
-
+from ..routers.auth import get_current_user, JWT_SECRET, JWT_ALGORITHM
 router = APIRouter(prefix="/dns-profile", tags=["dns-profile"])
 
 BACKEND_URL = "https://guardiancore-production.up.railway.app"
@@ -57,9 +56,8 @@ MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def decode_token_to_user(token: str) -> dict:
-    """Decode a raw JWT string into a user dict — same logic as get_current_user."""
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         return {
             "user_id": payload.get("user_id") or payload.get("sub"),
             "username": payload.get("username", "child"),
@@ -67,7 +65,6 @@ def decode_token_to_user(token: str) -> dict:
         }
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-
 
 @router.get("/install")
 async def get_dns_profile(
