@@ -15,7 +15,12 @@ logger = logging.getLogger(__name__)
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-versatile"
+GROQ_MODEL = "llama-3.1-8b-instant"
+
+# Simple in-memory cache — domain -> (decision, reason, risk_score)
+_classification_cache: dict = {}
+
+
 class CheckUrlRequest(BaseModel):
     url: str
     child_id: Optional[int] = None
@@ -62,38 +67,58 @@ def hash_domain(domain: str) -> str:
 
 
 # ─── Infrastructure-only safe domains ────────────────────────────────────────
-# ONLY domains that break the phone/OS if blocked.
-# Social media, search engines, news — all go through AI now.
 INFRASTRUCTURE_DOMAINS = {
-    # Apple OS & device services
     "apple.com", "icloud.com", "cdn.apple.com", "mzstatic.com",
     "apple-dns.net", "applecdn.net", "apple-cloudkit.com",
     "push.apple.com", "gateway.icloud.com", "itunes.apple.com",
-    # Google infrastructure (not YouTube/Search — AI handles those)
     "googleapis.com", "gstatic.com", "googleusercontent.com",
-    # Cloudflare & CDN infrastructure
     "cloudflare.com", "cloudflare-dns.com",
     "akamai.net", "akamaihd.net", "fastly.net",
-    # WhatsApp transport layer (not content — DNS can't see messages)
     "whatsapp.net",
-    # Microsoft OS services
     "windows.com", "windowsupdate.com", "microsoft.com",
-    # Your own backend — never block
     "railway.app",
 }
 
-
 # ─── Hard block keywords ─────────────────────────────────────────────────────
-# Only truly unambiguous CSAM / terrorism / darkweb — instant block, no AI.
 BLOCK_KEYWORDS = ["child-abuse", "csam", "terrorism", "jihad", "darkweb", "onion"]
+
+# ─── Known blocks — never waste tokens on these ──────────────────────────────
+KNOWN_BLOCKED = {
+    "pornhub.com", "xvideos.com", "xnxx.com", "xhamster.com",
+    "redtube.com", "youporn.com", "tube8.com", "porn.com",
+    "sex.com", "adult.com", "brazzers.com", "onlyfans.com",
+    "bet365.com", "draftkings.com", "fanduel.com", "pokerstars.com",
+}
+
+# ─── Known safe — never waste tokens on these ────────────────────────────────
+KNOWN_SAFE = {
+    "google.com", "bing.com", "yahoo.com", "duckduckgo.com",
+    "wikipedia.org", "britannica.com", "khanacademy.org",
+    "amazon.com", "bbc.com", "reuters.com", "weather.com",
+}
 
 
 async def ai_classify(domain: str) -> tuple[str, str, int]:
-    """
-    Ask Groq to classify the domain.
-    Returns ("block"|"warn"|"safe"), reason, risk_score
-    Falls back to "warn" (not "safe") on failure — err on the side of caution.
-    """
+    # Check in-memory cache first
+    if domain in _classification_cache:
+        logger.info(f"[cache hit] {domain}")
+        return _classification_cache[domain]
+
+    # Known blocked — no AI needed
+    root = domain.split(".")[-2] + "." + domain.split(".")[-1] if domain.count(".") >= 1 else domain
+    for blocked in KNOWN_BLOCKED:
+        if domain == blocked or domain.endswith("." + blocked):
+            result = ("block", "explicit adult/gambling content", 100)
+            _classification_cache[domain] = result
+            return result
+
+    # Known safe — no AI needed
+    for safe in KNOWN_SAFE:
+        if domain == safe or domain.endswith("." + safe):
+            result = ("safe", "trusted site", 5)
+            _classification_cache[domain] = result
+            return result
+
     if not GROQ_API_KEY:
         logger.warning("GROQ_API_KEY not set — defaulting to warn")
         return "warn", "AI unavailable — flagged for caution", 50
@@ -124,7 +149,7 @@ async def ai_classify(domain: str) -> tuple[str, str, int]:
                 },
                 json={
                     "model": GROQ_MODEL,
-                    "max_tokens": 120,
+                    "max_tokens": 80,
                     "temperature": 0,
                     "messages": [{"role": "user", "content": prompt}],
                 },
@@ -142,10 +167,13 @@ async def ai_classify(domain: str) -> tuple[str, str, int]:
             risk_score = int(data.get("risk_score", 50))
             if decision not in ("block", "warn", "safe"):
                 decision = "warn"
-            return decision, reason, risk_score
+
+            result = (decision, reason, risk_score)
+            _classification_cache[domain] = result
+            return result
 
     except json.JSONDecodeError as e:
-        logger.warning(f"AI JSON parse failed for {domain}: {e} — raw: {content[:100]}")
+        logger.warning(f"AI JSON parse failed for {domain}: {e}")
         return "warn", "AI response parse error", 50
     except Exception as e:
         logger.warning(f"AI classification failed for {domain}: {e}")
@@ -175,10 +203,6 @@ async def log_event(session, child_id, domain, event_type, category):
 
 
 async def evaluate_url(url: str, child_id: int) -> CheckUrlResponse:
-    """
-    Core classification logic. Called directly by dnsprofile.py (no HTTP, no auth needed).
-    Also exposed via the /check-url/ POST endpoint for authenticated external callers.
-    """
     domain = extract_domain(url)
 
     async with async_session() as session:
@@ -248,7 +272,6 @@ async def evaluate_url(url: str, child_id: int) -> CheckUrlResponse:
 
 @router.post("/", response_model=CheckUrlResponse)
 async def check_url(payload: CheckUrlRequest, current_user: dict = Depends(get_current_user)):
-    """Authenticated endpoint for external callers (browser extension, manual checks)."""
     if current_user["account_type"] == "child":
         child_id = current_user["user_id"]
     elif current_user["account_type"] == "parent" and payload.child_id:
