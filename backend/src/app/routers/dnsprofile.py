@@ -205,7 +205,7 @@ async def check_custom_block(domain: str, child_id: int) -> tuple[bool, bool]:
     try:
         async with async_session() as session:
             result = await session.execute(
-                text("SELECT blocked FROM custom_blocks WHERE child_id = :cid AND domain = :d LIMIT 1"),
+                text("SELECT blocked FROM custom_blocks WHERE child_id = :cid AND (:d = domain OR :d LIKE '%.' || domain) LIMIT 1"),
                 {"cid": child_id, "d": domain}
             )
             row = result.fetchone()
