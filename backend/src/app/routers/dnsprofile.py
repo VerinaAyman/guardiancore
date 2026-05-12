@@ -8,39 +8,14 @@ from fastapi.responses import Response
 import jwt as pyjwt
 import httpx
 from ..routers.auth import JWT_SECRET, JWT_ALGORITHM
+from ..routers.checkurl import evaluate_url  # Direct import — no HTTP, no auth issue
 from ..db import async_session
 from sqlalchemy import text
 
 router = APIRouter(prefix="/dns-profile", tags=["dns-profile"])
 
 BACKEND_URL = "https://guardiancore-production.up.railway.app"
-NEXTDNS_API_KEY = os.environ.get("NEXTDNS_API_KEY", "")
-NEXTDNS_CONFIG_ID = os.environ.get("NEXTDNS_CONFIG_ID", "29ddb3")
-NEXTDNS_API_BASE = "https://api.nextdns.io"
 
-DEFAULT_BLOCKLIST = {
-    "pornhub.com", "xvideos.com", "xhamster.com", "redtube.com",
-    "youporn.com", "tube8.com", "spankbang.com", "xnxx.com",
-    "1xbet.com", "bet365.com", "pokerstars.com",
-}
-
-BLOCK_KEYWORDS = ["porn", "xxx", "adult", "nude", "csam", "darkweb"]
-
-SAFE_DOMAINS = {
-    "apple.com", "icloud.com", "googleapis.com", "gstatic.com",
-    "cloudflare.com", "akamai.net", "fastly.net", "whatsapp.net",
-    "whatsapp.com", "facebook.com", "instagram.com", "google.com",
-    "youtube.com", "twitter.com", "x.com", "amazon.com",
-    "microsoft.com", "windows.com", "live.com", "office.com",
-    "cdn.apple.com", "mzstatic.com", "apple-dns.net", "applecdn.net",
-}
-
-# Domains that get a warning instead of a block or allow
-WARNING_DOMAINS = {
-    "reddit.com", "discord.com", "tumblr.com", "omegle.com",
-    "chatroulette.com", "twitch.tv", "steampowered.com", "itch.io",
-    "vice.com", "4chan.org",
-}
 
 MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -91,15 +66,15 @@ MOBILECONFIG_TEMPLATE = """<?xml version="1.0" encoding="UTF-8"?>
 
 
 def _utcnow() -> datetime:
-    return datetime.now(tz=timezone.utc).replace(tzinfo=None)  # naive UTC for DB consistency
+    return datetime.now(tz=timezone.utc).replace(tzinfo=None)
 
 
 def decode_token_to_user(token: str) -> dict:
     try:
         payload = pyjwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGORITHM])
         return {
-            "user_id": payload.get("user_id") or payload.get("sub"),
-            "username": payload.get("username", "child"),
+            "user_id":      payload.get("user_id") or payload.get("sub"),
+            "username":     payload.get("username", "child"),
             "account_type": payload.get("account_type", "child"),
         }
     except pyjwt.ExpiredSignatureError:
@@ -125,9 +100,9 @@ def parse_dns_query(data: bytes) -> str:
 
 
 def build_nxdomain_response(query_data: bytes) -> bytes:
-    tx_id = query_data[:2]
-    flags = b'\x81\x83'
-    counts = b'\x00\x01\x00\x00\x00\x00\x00\x00'
+    tx_id    = query_data[:2]
+    flags    = b'\x81\x83'
+    counts   = b'\x00\x01\x00\x00\x00\x00\x00\x00'
     question = query_data[12:]
     return tx_id + flags + counts + question
 
@@ -171,7 +146,6 @@ async def ensure_tables():
                     last_seen TIMESTAMP NOT NULL DEFAULT NOW()
                 )
             """))
-            # activity_events must allow event_type = 'warning' and 'visit'
             await session.execute(text("""
                 CREATE TABLE IF NOT EXISTS activity_events (
                     id SERIAL PRIMARY KEY,
@@ -223,18 +197,11 @@ async def get_child_rules(child_id: int) -> dict:
     return defaults
 
 
-async def check_domain_against_rules(domain: str, child_id: int = 2) -> tuple[bool, str]:
+async def check_custom_block(domain: str, child_id: int) -> tuple[bool, bool]:
     """
-    Returns (blocked: bool, category: str).
-    category can be: a block reason, "warning", "custom_allow", or ""
+    Check parent-defined custom blocks/allows.
+    Returns (is_custom_blocked, is_custom_allowed).
     """
-    if not domain or len(domain) < 3:
-        return False, ""
-
-    rules = await get_child_rules(child_id)
-    parts = domain.split(".")
-
-    # 1. Custom blocks — highest priority
     try:
         async with async_session() as session:
             result = await session.execute(
@@ -243,96 +210,74 @@ async def check_domain_against_rules(domain: str, child_id: int = 2) -> tuple[bo
             )
             row = result.fetchone()
             if row is not None:
-                return (True, "custom_block") if row[0] else (False, "custom_allow")
+                return (True, False) if row[0] else (False, True)
     except Exception:
         pass
+    return False, False
 
-    # 2. Hard blocklist
-    for i in range(len(parts) - 1):
-        candidate = ".".join(parts[i:])
-        if candidate in DEFAULT_BLOCKLIST:
-            return True, "explicit_blocklist"
 
-    # 3. Known safe domains — skip all further checks
-    for i in range(len(parts) - 1):
-        candidate = ".".join(parts[i:])
-        if candidate in SAFE_DOMAINS:
-            return False, ""
+# ─── DNS query handler ────────────────────────────────────────────────────────
 
-    # 4. Known warning domains — always warn regardless of rules
-    for i in range(len(parts) - 1):
-        candidate = ".".join(parts[i:])
-        if candidate in WARNING_DOMAINS:
+async def resolve_and_classify(domain: str, child_id: int) -> tuple[bool, str]:
+    """
+    Returns (blocked: bool, category: str).
+
+    Flow:
+    1. Custom parent blocks/allowlists (highest priority)
+    2. evaluate_url() — which handles infrastructure passthrough,
+       hard keyword blocks, and AI classification.
+       This is a direct function call — no HTTP, no auth needed.
+    3. Parent category rules filter AI results
+       (e.g. social_media=OFF means AI-warned social sites still load)
+    """
+    if not domain or len(domain) < 3:
+        return False, ""
+
+    # 1. Custom blocks take priority over everything
+    is_custom_blocked, is_custom_allowed = await check_custom_block(domain, child_id)
+    if is_custom_blocked:
+        return True, "custom_block"
+    if is_custom_allowed:
+        return False, "custom_allow"
+
+    # 2. Call evaluate_url directly — full AI classification pipeline
+    try:
+        result = await evaluate_url(f"https://{domain}", child_id)
+    except Exception as e:
+        print(f"[dns] evaluate_url error for {domain}: {e}")
+        return False, ""
+
+    # 3. If AI says block, check if parent has disabled that category
+    if result.blocked:
+        category = result.category or "ai_blocked"
+        rules = await get_child_rules(child_id)
+
+        # Respect parent category toggles — if parent turned OFF social_media
+        # blocking, don't block it even if AI flagged it
+        if category == "social_media" and not rules.get("social_media", False):
+            return False, "warning"  # still warn, just don't block
+        if category == "gaming" and not rules.get("gaming", False):
+            return False, "warning"
+        if category == "porn" and not rules.get("porn", True):
+            return False, "warning"
+        if category == "gambling" and not rules.get("gambling", True):
             return False, "warning"
 
-    # 5. Keyword + category checks
-    porn_keywords     = ["porn", "xxx", "adult", "nude", "csam"]
-    gambling_keywords = ["bet", "casino", "poker", "gambling", "slots"]
-    social_domains    = ["tiktok.com", "snapchat.com"]
-    gaming_domains    = ["roblox.com", "miniclip.com", "addictinggames.com"]
+        return True, category
 
-    if rules.get("porn", True):
-        for kw in porn_keywords:
-            if kw in domain:
-                return True, "porn"
-
-    if rules.get("gambling", True):
-        for kw in gambling_keywords:
-            if kw in domain:
-                return True, "gambling"
-
-    if rules.get("social_media", False):
-        for d in social_domains:
-            if d in domain:
-                return True, "social_media"
-
-    if rules.get("gaming", False):
-        for d in gaming_domains:
-            if d in domain:
-                return True, "gaming"
-
-    # 6. AI classification
-    try:
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f"{BACKEND_URL}/check-url/",
-                json={"url": f"https://{domain}", "child_id": child_id},
-                headers={"Content-Type": "application/json"},
-                timeout=3.0,
-            )
-            if resp.status_code == 200:
-                data = resp.json()
-                if data.get("blocked"):
-                    category = data.get("category") or "ai_blocked"
-                    if category == "social_media" and not rules.get("social_media", False):
-                        return False, ""
-                    if category == "gaming" and not rules.get("gaming", False):
-                        return False, ""
-                    return True, category
-                if data.get("warning"):
-                    return False, "warning"
-    except Exception:
-        pass
+    if result.warning:
+        return False, "warning"
 
     return False, ""
 
 
 async def log_dns_event(domain: str, child_id: int, event_type: str, category: str = ""):
-    """
-    Log any DNS event (blocked, warning, visit) to activity_events.
-
-    Key fix: does NOT use ON CONFLICT DO NOTHING so every DNS query
-    gets its own row. The dashboard aggregates them by domain.
-    The domain_hash includes a timestamp component so rows are unique.
-    """
     try:
         async with async_session() as session:
             now = _utcnow()
-            # Include timestamp in hash so every event is a unique row
             domain_hash = hashlib.sha256(
                 f"{domain}:{child_id}:{event_type}:{now.isoformat()}".encode()
             ).hexdigest()
-
             await session.execute(
                 text("""
                     INSERT INTO activity_events
@@ -346,7 +291,7 @@ async def log_dns_event(domain: str, child_id: int, event_type: str, category: s
                     "child_id":         child_id,
                     "domain_hash":      domain_hash,
                     "domain":           domain,
-                    "event_type":       event_type,   # "blocked", "warning", or "visit"
+                    "event_type":       event_type,
                     "blocked_category": category if category else None,
                     "event_date":       now,
                     "expires_at":       now + timedelta(days=3),
@@ -354,21 +299,7 @@ async def log_dns_event(domain: str, child_id: int, event_type: str, category: s
             )
             await session.commit()
     except Exception as e:
-        # Log but never crash the DNS query path
         print(f"[dns] log_dns_event error: {e}")
-
-
-# Keep these as thin wrappers for clarity at the call site
-async def log_blocked_domain(domain: str, child_id: int = 2, category: str = "dns_filter"):
-    await log_dns_event(domain, child_id, event_type="blocked", category=category)
-
-
-async def log_warning_domain(domain: str, child_id: int = 2):
-    await log_dns_event(domain, child_id, event_type="warning", category="warning")
-
-
-async def log_visit(domain: str, child_id: int = 2):
-    await log_dns_event(domain, child_id, event_type="visit", category="")
 
 
 async def resolve_upstream(query_data: bytes) -> bytes:
@@ -410,7 +341,7 @@ async def get_dns_profile(
                     text("SELECT username FROM children WHERE id = :cid"),
                     {"cid": child_id}
                 )
-                child_row = name_result.fetchone()
+                child_row     = name_result.fetchone()
                 child_username = child_row[0] if child_row else "child"
         except HTTPException:
             raise
@@ -418,7 +349,7 @@ async def get_dns_profile(
             child_username = "child"
     else:
         target_child_id = user["user_id"]
-        child_username = user.get("username", "child")
+        child_username  = user.get("username", "child")
 
     profile_id = hashlib.sha256(f"profile:{target_child_id}".encode()).hexdigest()[:32]
 
@@ -528,7 +459,7 @@ async def get_custom_blocks(child_id: int, token: str = Query(None)):
 async def set_custom_block(child_id: int, request: Request, token: str = Query(None)):
     if not token:
         raise HTTPException(status_code=401, detail="Missing token")
-    body = await request.json()
+    body   = await request.json()
     domain  = body.get("domain", "").lower().strip()
     blocked = body.get("blocked", True)
     if not domain:
@@ -558,7 +489,7 @@ async def set_custom_block(child_id: int, request: Request, token: str = Query(N
 
 @router.post("/heartbeat")
 async def dns_heartbeat(request: Request):
-    body = await request.json()
+    body           = await request.json()
     child_id       = body.get("child_id")
     profile_active = body.get("profile_active", True)
     if not child_id:
@@ -651,26 +582,23 @@ async def dns_query(
         else:
             raise HTTPException(status_code=400, detail="No DNS query provided")
 
-        child_id         = await get_child_id_for_profile(profile_id) if profile_id else 2
-        domain           = parse_dns_query(query_data)
-        blocked, category = await check_domain_against_rules(domain, child_id=child_id)
+        child_id           = await get_child_id_for_profile(profile_id) if profile_id else 2
+        domain             = parse_dns_query(query_data)
+        blocked, category  = await resolve_and_classify(domain, child_id=child_id)
 
         if blocked:
-            # Log as "blocked" — shows as 🚫 in dashboard
-            await log_blocked_domain(domain, child_id=child_id, category=category)
+            await log_dns_event(domain, child_id, event_type="blocked", category=category)
             return Response(
                 content=build_nxdomain_response(query_data),
                 media_type="application/dns-message"
             )
         elif category == "warning":
-            # Log as "warning" — shows as ⚠️ in dashboard, site still loads
-            await log_warning_domain(domain, child_id=child_id)
+            await log_dns_event(domain, child_id, event_type="warning", category="warning")
             upstream = await resolve_upstream(query_data)
             return Response(content=upstream, media_type="application/dns-message")
         else:
-            # Log normal visits too so they appear in child's dashboard
             if domain:
-                await log_visit(domain, child_id=child_id)
+                await log_dns_event(domain, child_id, event_type="visit", category="")
             upstream = await resolve_upstream(query_data)
             return Response(content=upstream, media_type="application/dns-message")
 

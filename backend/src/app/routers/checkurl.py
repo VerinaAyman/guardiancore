@@ -4,7 +4,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from datetime import datetime, timedelta
 from sqlalchemy import select, insert, and_
-import logging, re, hashlib, os
+import logging, re, hashlib, os, json
 import httpx
 
 from ..db import async_session, rules, activity_events
@@ -63,52 +63,57 @@ def hash_domain(domain: str) -> str:
     return hashlib.sha256(domain.encode()).hexdigest()
 
 
-# Hard block keywords — always block no matter what
-BLOCK_KEYWORDS = ["child-abuse", "csam", "terrorism", "jihad", "darkweb"]
-
-# Fast keyword pre-check before calling AI
-WARNING_KEYWORDS = [
-    "adult", "porn", "xxx", "sex", "nude", "dating", "violence",
-    "gore", "drug", "weed", "cannabis", "gambling", "bet", "casino",
-    "weapon", "gun", "hack", "torrent", "pirat",
-]
-
-# Domains that are always safe — skip AI for these
-SAFE_DOMAINS = {
-    "google.com", "apple.com", "microsoft.com", "youtube.com",
-    "wikipedia.org", "github.com", "stackoverflow.com", "cloudflare.com",
-    "icloud.com", "gstatic.com", "googleapis.com",
+# ─── Infrastructure-only safe domains ────────────────────────────────────────
+# ONLY domains that break the phone/OS if blocked.
+# Social media, search engines, news — all go through AI now.
+INFRASTRUCTURE_DOMAINS = {
+    # Apple OS & device services
+    "apple.com", "icloud.com", "cdn.apple.com", "mzstatic.com",
+    "apple-dns.net", "applecdn.net", "apple-cloudkit.com",
+    "push.apple.com", "gateway.icloud.com", "itunes.apple.com",
+    # Google infrastructure (not YouTube/Search — AI handles those)
+    "googleapis.com", "gstatic.com", "googleusercontent.com",
+    # Cloudflare & CDN infrastructure
+    "cloudflare.com", "cloudflare-dns.com",
+    "akamai.net", "akamaihd.net", "fastly.net",
+    # WhatsApp transport layer (not content — DNS can't see messages)
+    "whatsapp.net",
+    # Microsoft OS services
+    "windows.com", "windowsupdate.com", "microsoft.com",
+    # Your own backend — never block
+    "railway.app",
 }
 
 
-def keyword_precheck(domain: str):
-    for kw in BLOCK_KEYWORDS:
-        if kw in domain:
-            return "block", f"Prohibited keyword: {kw}", 100
-    for kw in WARNING_KEYWORDS:
-        if kw in domain:
-            return "warn", f"May contain age-restricted content ({kw})", 65
-    return None, "", 0
+# ─── Hard block keywords ─────────────────────────────────────────────────────
+# Only truly unambiguous CSAM / terrorism / darkweb — instant block, no AI.
+BLOCK_KEYWORDS = ["child-abuse", "csam", "terrorism", "jihad", "darkweb", "onion"]
 
 
 async def ai_classify(domain: str) -> tuple[str, str, int]:
     """
     Ask Groq to classify the domain.
     Returns ("block"|"warn"|"safe"), reason, risk_score
+    Falls back to "warn" (not "safe") on failure — err on the side of caution.
     """
     if not GROQ_API_KEY:
-        return "safe", "AI unavailable", 10
+        logger.warning("GROQ_API_KEY not set — defaulting to warn")
+        return "warn", "AI unavailable — flagged for caution", 50
 
     prompt = (
-        f"You are a child safety content classifier. "
+        f"You are a child safety content classifier for a parental control app. "
         f"Classify the website domain '{domain}' for a child aged 8-16.\n\n"
         f"Respond ONLY with a JSON object, no markdown, no explanation:\n"
-        f'{{"decision": "block"|"warn"|"safe", "reason": "short reason", "risk_score": 0-100}}\n\n'
-        f"Rules:\n"
-        f"- block: porn, gambling, extreme violence, drugs, weapons, dark web\n"
-        f"- warn: social media, forums, chat platforms, gaming, news with mature themes, dating\n"
-        f"- safe: educational, search engines, kids content, productivity tools\n"
-        f"Domain: {domain}"
+        f'{{"decision": "block"|"warn"|"safe", "reason": "short reason under 10 words", "risk_score": 0-100}}\n\n'
+        f"Classification rules:\n"
+        f"- block (risk 75-100): porn, explicit content, gambling, extreme violence, drugs, weapons, dark web, hate sites\n"
+        f"- warn (risk 40-74): social media (Facebook, Instagram, TikTok, Twitter/X, Snapchat, Discord), "
+        f"forums, chat platforms, gaming sites, news with mature themes, dating apps, "
+        f"YouTube (due to unmoderated content), Reddit, Twitch\n"
+        f"- safe (risk 0-39): educational sites, search engines (Google, Bing), "
+        f"kids content, productivity tools, coding resources, Wikipedia, "
+        f"trusted news (BBC, Reuters), shopping (Amazon)\n\n"
+        f"Domain to classify: {domain}"
     )
 
     try:
@@ -121,54 +126,65 @@ async def ai_classify(domain: str) -> tuple[str, str, int]:
                 },
                 json={
                     "model": GROQ_MODEL,
-                    "max_tokens": 100,
+                    "max_tokens": 120,
                     "temperature": 0,
                     "messages": [{"role": "user", "content": prompt}],
                 },
                 timeout=5.0,
             )
             if resp.status_code != 200:
-                logger.warning(f"Groq returned {resp.status_code}")
-                return "safe", "AI unavailable", 10
+                logger.warning(f"Groq returned {resp.status_code}: {resp.text[:200]}")
+                return "warn", "AI unavailable — flagged for caution", 50
 
             content = resp.json()["choices"][0]["message"]["content"].strip()
-            # Strip markdown fences if present
             content = content.replace("```json", "").replace("```", "").strip()
-            import json
             data = json.loads(content)
-            decision   = data.get("decision", "safe")
+            decision   = data.get("decision", "warn")
             reason     = data.get("reason", "")
-            risk_score = int(data.get("risk_score", 10))
+            risk_score = int(data.get("risk_score", 50))
             if decision not in ("block", "warn", "safe"):
-                decision = "safe"
+                decision = "warn"
             return decision, reason, risk_score
 
+    except json.JSONDecodeError as e:
+        logger.warning(f"AI JSON parse failed for {domain}: {e} — raw: {content[:100]}")
+        return "warn", "AI response parse error", 50
     except Exception as e:
         logger.warning(f"AI classification failed for {domain}: {e}")
-        return "safe", "AI unavailable", 10
+        return "warn", "AI unavailable — flagged for caution", 50
 
 
 async def log_event(session, child_id, domain, event_type, category):
     try:
-        await session.execute(insert(activity_events).values(
-            child_id=child_id,
-            domain_hash=hash_domain(domain),
-            domain=domain,
-            event_type=event_type,
-            blocked_category=category if event_type in ("blocked", "warning") else None,
-            event_date=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(days=3),
-        ))
+        now = datetime.utcnow()
+        domain_hash = hashlib.sha256(
+            f"{domain}:{child_id}:{event_type}:{now.isoformat()}".encode()
+        ).hexdigest()
+        await session.execute(
+            activity_events.insert().values(
+                child_id=child_id,
+                domain_hash=domain_hash,
+                domain=domain,
+                event_type=event_type,
+                blocked_category=category if event_type in ("blocked", "warning") else None,
+                event_date=now,
+                expires_at=now + timedelta(days=3),
+            )
+        )
         await session.commit()
     except Exception as e:
         logger.warning(f"log_event failed: {e}")
 
 
 async def evaluate_url(url: str, child_id: int) -> CheckUrlResponse:
+    """
+    Core classification logic. Called directly by dnsprofile.py (no HTTP, no auth needed).
+    Also exposed via the /check-url/ POST endpoint for authenticated external callers.
+    """
     domain = extract_domain(url)
 
     async with async_session() as session:
-        # 1. Check explicit rules first (parent-defined block/allowlists)
+        # 1. Parent-defined explicit rules (highest priority)
         result = await session.execute(
             select(rules).where(rules.c.enabled == True)
         )
@@ -177,36 +193,37 @@ async def evaluate_url(url: str, child_id: int) -> CheckUrlResponse:
                 if rule.rule_type == "blocklist":
                     await log_event(session, child_id, domain, "blocked", rule.category or "rule")
                     return CheckUrlResponse(
-                        blocked=True, warning=False, risk_score=90,
-                        reason=rule.explanation or "Blocked by GuardianLens rules",
+                        blocked=True, warning=False, risk_score=95,
+                        reason=rule.explanation or "Blocked by parent rules",
                         category=rule.category, domain=domain,
                     )
                 elif rule.rule_type == "allowlist":
                     await log_event(session, child_id, domain, "visit", "allowlist")
                     return CheckUrlResponse(
                         blocked=False, warning=False, risk_score=5,
-                        reason="Approved site", category=rule.category, domain=domain,
+                        reason="Approved by parent", category="allowlist", domain=domain,
                     )
 
-        # 2. Always-safe domains — skip AI
-        for safe in SAFE_DOMAINS:
-            if domain == safe or domain.endswith("." + safe):
+        # 2. Infrastructure passthrough — skip AI, never block
+        for infra in INFRASTRUCTURE_DOMAINS:
+            if domain == infra or domain.endswith("." + infra):
                 await log_event(session, child_id, domain, "visit", "safe")
                 return CheckUrlResponse(
-                    blocked=False, warning=False, risk_score=5,
-                    reason="Safe domain", category=None, domain=domain,
+                    blocked=False, warning=False, risk_score=0,
+                    reason="System infrastructure", category="infrastructure", domain=domain,
                 )
 
-        # 3. Hard keyword block (instant, no AI needed)
-        pre_decision, pre_reason, pre_score = keyword_precheck(domain)
-        if pre_decision == "block":
-            await log_event(session, child_id, domain, "blocked", "keyword_filter")
-            return CheckUrlResponse(
-                blocked=True, warning=False, risk_score=pre_score,
-                reason=pre_reason, category="prohibited", domain=domain,
-            )
+        # 3. Hard keyword block — instant, no AI needed
+        for kw in BLOCK_KEYWORDS:
+            if kw in domain:
+                await log_event(session, child_id, domain, "blocked", "keyword_filter")
+                return CheckUrlResponse(
+                    blocked=True, warning=False, risk_score=100,
+                    reason=f"Prohibited content: {kw}",
+                    category="prohibited", domain=domain,
+                )
 
-        # 4. AI classification
+        # 4. AI classification — handles everything else
         decision, reason, risk_score = await ai_classify(domain)
 
         if decision == "block":
@@ -216,23 +233,24 @@ async def evaluate_url(url: str, child_id: int) -> CheckUrlResponse:
                 reason=reason, category="ai_blocked", domain=domain,
             )
 
-        if decision == "warn" or pre_decision == "warn":
-            await log_event(session, child_id, domain, "warning", "warning")
+        if decision == "warn":
+            await log_event(session, child_id, domain, "warning", "ai_warning")
             return CheckUrlResponse(
-                blocked=False, warning=True, risk_score=risk_score or pre_score,
-                reason=reason or pre_reason, category="age_restricted", domain=domain,
+                blocked=False, warning=True, risk_score=risk_score,
+                reason=reason, category="age_restricted", domain=domain,
             )
 
         # 5. Safe
         await log_event(session, child_id, domain, "visit", "safe")
         return CheckUrlResponse(
             blocked=False, warning=False, risk_score=risk_score,
-            reason="Site appears safe", category=None, domain=domain,
+            reason=reason or "Site appears safe", category=None, domain=domain,
         )
 
 
 @router.post("/", response_model=CheckUrlResponse)
 async def check_url(payload: CheckUrlRequest, current_user: dict = Depends(get_current_user)):
+    """Authenticated endpoint for external callers (browser extension, manual checks)."""
     if current_user["account_type"] == "child":
         child_id = current_user["user_id"]
     elif current_user["account_type"] == "parent" and payload.child_id:
