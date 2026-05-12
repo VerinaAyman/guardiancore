@@ -104,7 +104,10 @@ def build_nxdomain_response(query_data: bytes) -> bytes:
     flags    = b'\x81\x83'
     counts   = b'\x00\x01\x00\x00\x00\x00\x00\x00'
     question = query_data[12:]
-    return tx_id + flags + counts + question
+    # SOA record with TTL=5 so unblocks propagate in ~5 seconds
+    soa = b'\xc0\x0c\x00\x06\x00\x01\x00\x00\x00\x05\x00\x16'
+    soa += b'\x00' * 22
+    return tx_id + flags + counts + question + soa
 
 
 async def ensure_tables():
