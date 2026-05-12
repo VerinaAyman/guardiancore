@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GROQ_MODEL = "llama-3.3-70b-specdec"
+GROQ_MODEL = "llama-3.3-70b-versatile"
 class CheckUrlRequest(BaseModel):
     url: str
     child_id: Optional[int] = None
@@ -131,7 +131,7 @@ async def ai_classify(domain: str) -> tuple[str, str, int]:
                 timeout=5.0,
             )
             if resp.status_code != 200:
-                logger.warning(f"Groq returned {resp.status_code}: {resp.text[:200]}")
+                logger.error(f"Groq ERROR {resp.status_code} for {domain}: {resp.text[:500]}")
                 return "warn", "AI unavailable — flagged for caution", 50
 
             content = resp.json()["choices"][0]["message"]["content"].strip()
