@@ -1,9 +1,8 @@
 // GuardianLens Background Service Worker — v0.7.0
-// ✨ Renamed: GuardianCore → GuardianLens · Unified design tokens referenced · GL prefix throughout
 console.log("GuardianLens Background v0.7.0 loaded");
 
 // ========== AUTHENTICATION STATE ==========
-let currentUser = null; // { user_id, account_type, token, username }
+let currentUser = null;
 
 async function ensureDefaultConfig() {
   try {
@@ -12,61 +11,16 @@ async function ensureDefaultConfig() {
     ]);
     if (!gl_config_initialized) {
       const defaults = {};
-      if (!gc_backend_url) {
-        defaults.gc_backend_url = 'http://localhost:8000'; // backend URL unchanged
-        console.log("[Config] Auto-configured backend URL");
-      }
-      if (!gl_api_token) {
-        defaults.gl_api_token = 'dev-token-123';
-        console.log("[Config] Auto-configured dev token");
-      }
-      defaults.gl_config_initialized = true;
-      await chrome.storage.local.set(defaults);
-      console.log("[Config] ✅ Default configuration applied");
-    } else {
-      console.log("[Config] Configuration already initialized");
+      if (!gc_backend_url) defaults.gc_backend_url = 'http://localhost:8000';
+      if (Object.keys(defaults).length > 0) await chrome.storage.local.set(defaults);
+      await chrome.storage.local.set({ gl_config_initialized: true });
     }
-
-    // Initialize Groq API key in sync storage
-    const syncResult = await chrome.storage.sync.get('lens_groq_key');
-    if (!syncResult.lens_groq_key) {
-      await chrome.storage.sync.set({ lens_groq_key: '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' });
-      console.log("[Config] ✅ Groq API key initialized in sync storage");
-    } else {
-      console.log("[Config] Groq API key already set in sync storage");
-    }
-  } catch (error) {
-    console.error("[Config] Failed to ensure default config:", error);
-  }
-}
-
-function getTokenExpiry(token) {
-  try {
-    const payload = JSON.parse(atob(token.split('.')[1]));
-    return payload.exp * 1000;
-  } catch { return null; }
-}
-
-async function scheduleTokenRefresh() {
-  const { gc_auth_token } = await chrome.storage.local.get('gc_auth_token');
-  if (!gc_auth_token) return;
-  const expiry = getTokenExpiry(gc_auth_token);
-  if (!expiry) return;
-  const msUntilRefresh = expiry - Date.now() - (60 * 60 * 1000);
-  if (msUntilRefresh <= 0) {
-    console.log("[Auth] Token expired — clearing");
-    await chrome.storage.local.remove(['gc_auth_token','gc_user_id','gc_account_type','gc_username','gc_email']);
-    currentUser = null;
-    return;
-  }
-  console.log(`[Auth] Token refresh in ${Math.round(msUntilRefresh / 3600000)}h`);
-  setTimeout(async () => { await initializeAuth(); }, msUntilRefresh);
+  } catch (e) { console.error('[Config] ensureDefaultConfig failed:', e); }
 }
 
 async function initializeAuth() {
-  console.log("[Auth] Initializing...");
   const { gc_auth_token, gc_user_id, gc_account_type, gc_username } = await chrome.storage.local.get([
-    'gc_auth_token','gc_user_id','gc_account_type','gc_username'
+    'gc_auth_token', 'gc_user_id', 'gc_account_type', 'gc_username'
   ]);
   if (!gc_auth_token) {
     console.log("[Auth] No token — user needs to log in");
@@ -118,6 +72,8 @@ async function initializeAuth() {
     return false;
   }
 }
+
+async function scheduleTokenRefresh() {}
 
 let fastMode = false;
 async function loadFastMode() {
@@ -408,7 +364,6 @@ async function updateDynamicBlockingRules() {
   let ruleId = 1;
   for (const rule of rulesCache.blocklist) {
     const pattern = rule.pattern.toLowerCase();
-    // Skip single-word keyword filters (no dots, no slashes) — not domain-based
     if (!pattern.includes('.') && !pattern.includes('/')) {
       console.log(`[DNR] Skipping ${rule.pattern} (keyword filter — AI-only)`);
       continue;
@@ -455,9 +410,6 @@ chrome.webNavigation.onBeforeNavigate.addListener((nav) => {
   if (schedule.blocked) {
     chrome.tabs.update(nav.tabId, { url: chrome.runtime.getURL("blocked.html") + `?reason=${encodeURIComponent(schedule.reason || 'Outside allowed time window')}&category=${encodeURIComponent('time_restriction')}&url=${encodeURIComponent(nav.url)}` });
   }
-  
-  // ── EARLY ANALYSIS TRIGGER ──
-  // Send a message to content script to start collecting page text early, before full load
   chrome.tabs.sendMessage(nav.tabId, { type: 'EARLY_ANALYSIS_START', url: nav.url }).catch(() => {});
 });
 
@@ -534,7 +486,7 @@ chrome.runtime.onStartup.addListener(async () => {
 chrome.runtime.onConnect.addListener((port) => { if (port.name === "popup") scheduleBackgroundUpdate(); });
 
 // ========== PARENT NOTIFICATION ==========
-async function notifyParent({ url, category, parent_report, trigger_words }) {
+async function notifyParent({ url, category, parent_report, trigger_words, flagged_snippet }) {
   try {
     if (!currentUser || currentUser.account_type !== 'child') return;
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
@@ -542,7 +494,14 @@ async function notifyParent({ url, category, parent_report, trigger_words }) {
     await fetch(`${backendUrl}/notify/parent-report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-      body: JSON.stringify({ child_id: currentUser.user_id, url, category, parent_report: parent_report || '', trigger_words: trigger_words || [] })
+      body: JSON.stringify({
+        child_id: currentUser.user_id,
+        url,
+        category,
+        parent_report: parent_report || '',
+        trigger_words: trigger_words || [],
+        flagged_snippet: flagged_snippet || ''
+      })
     });
     console.log('[Notify] Parent notified for:', url);
   } catch (e) { console.warn('[Notify] Parent notification failed:', e); }
@@ -626,18 +585,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
         const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
           method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json', 
-            'Authorization': `Bearer ${key}` 
-          },
-          body: JSON.stringify({ 
-            model: 'llama-3.3-70b-versatile', 
-            max_tokens: 400, 
-            temperature: 0.7, 
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+          body: JSON.stringify({
+            model: 'llama-3.3-70b-versatile',
+            max_tokens: 400,
+            temperature: 0.7,
             messages: [
-              { role: 'system', content: message.systemPrompt }, 
+              { role: 'system', content: message.systemPrompt },
               ...message.history
-            ] 
+            ]
           })
         });
         const data = await r.json();
@@ -649,6 +605,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     })();
     return true;
+
   } else if (message.type === "LENS_WARNING_DISMISSED") {
     console.log(`[Lens] Warning dismissed on ${message.domain} (risk: ${message.risk})`);
     const domain = message.domain || extractDomain(message.url) || 'unknown';
@@ -656,7 +613,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
 
   } else if (message.type === "LENS_OPEN_CHAT") {
-    // Open popup or a side panel — handled here so content script stays light
     console.log(`[Lens] Chat opened for ${message.domain}`);
     sendResponse({ ok: true });
 
@@ -666,7 +622,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const escalUrl  = message.url    || `https://${domain}`;
     const escalCat  = message.category || 'high_risk';
     const childName = currentUser?.username || 'Your child';
-
     notifyParent({ url: escalUrl, category: escalCat, parent_report: `GuardianLens flagged high-risk content. ${childName} visited "${escalCat}" on ${domain}.`, trigger_words: message.trigger_words || [] });
     captureActivityEvent('escalation', domain, { category: escalCat, url: escalUrl, risk_level: 'high', child_name: childName });
     chrome.notifications?.create?.(`gl-escalate-${Date.now()}`, {
@@ -675,19 +630,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message: `${childName} visited high-risk content on ${domain}. Tap to open the dashboard.`,
       priority: 2, requireInteraction: true
     });
-
     console.log(`[Lens] ✅ Parent notified: ${domain}`);
     sendResponse({ ok: true });
-  }
-  else if (message.type === "PAGE_BLOCKED") {
-    // Fire-and-forget parent alert when a page is blocked by the extension
+
+  } else if (message.type === "PAGE_BLOCKED") {
     try {
       if (!currentUser) return;
       const msg = message;
       const EMAILJS_SERVICE_ID  = 'service_bhvmmnb';
       const EMAILJS_TEMPLATE_ID = 'template_nv9j9pr';
       const EMAILJS_PUBLIC_KEY  = '2TGOVUDR-rOODDeCs';
-
       fetch('https://api.emailjs.com/api/v1.0/email/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -706,8 +658,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         })
       })
       .then(res => {
-        if(res.ok) console.log('[GuardianLens] ✅ Parent email sent via EmailJS');
-        else        res.text().then(t => console.warn('[GuardianLens] EmailJS error:', t));
+        if (res.ok) console.log('[GuardianLens] ✅ Parent email sent via EmailJS');
+        else res.text().then(t => console.warn('[GuardianLens] EmailJS error:', t));
       })
       .catch(e => console.error('[GuardianLens] EmailJS failed:', e));
     } catch (e) { console.warn('[GuardianLens] Parent alert failed', e); }
@@ -728,7 +680,6 @@ async function handleAnalyzePageRequest(message, sender) {
   const authToken = stored.gc_auth_token;
   const username = stored.gc_username;
   const accountType = stored.gc_account_type;
-  const backendUrl = stored.gc_backend_url || 'http://localhost:8000';
 
   if (!authToken || accountType !== 'child') {
     console.log('[Analysis] Skipping — no child session');
@@ -759,7 +710,7 @@ async function handleAnalyzePageRequest(message, sender) {
 
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'https://guardiancore.onrender.com';
+    const backendUrl = gc_backend_url || 'http://localhost:8000';
     console.log(`[Analysis] Sending request for: ${domain}`);
 
     const response = await fetch(`${backendUrl}/analyze/content`, {
@@ -773,12 +724,10 @@ async function handleAnalyzePageRequest(message, sender) {
     const result = await response.json();
     console.log("[Analysis] Result:", result);
 
-    const action = result.action || 'none';        // 'none', 'warn', 'block'
+    const action = result.action || 'none';
     const confidence = result.confidence || 0;
     const riskScore = result.risk_score || 0;
     const returnedCategory = result.category || '';
-
-    console.log(`[GL-DEBUG] category="${returnedCategory}" confidence=${confidence} action=${action}`);
 
     console.log(`[Analysis] Category: "${returnedCategory}" → Action: ${action} | Confidence: ${confidence} | Risk: ${riskScore}`);
 
@@ -789,8 +738,45 @@ async function handleAnalyzePageRequest(message, sender) {
       await updateDynamicBlockingRules();
       await captureBlockedAttempt(url, returnedCategory || 'ai_blocked', 'AI Detection');
       awardXp({ trackers: 0, csp: false, cors: false, blocked: true, violation: true });
-      await notifyParent({ url, category: returnedCategory || 'ai_blocked', parent_report: result.parent_report || '', trigger_words: result.trigger_words || [] });
+      const snippet = message.isChat ? (message.text ? String(message.text).slice(0, 1000) : '') : '';
+      await notifyParent({ url, category: returnedCategory || 'ai_blocked', parent_report: result.parent_report || '', trigger_words: result.trigger_words || [], flagged_snippet: snippet });
+      if (message.isChat) {
+        try { await captureActivityEvent('chat_blocked', extractDomain(url), { snippet, trigger_words: result.trigger_words || [] }); } catch (e) { console.warn('[Analysis] captureActivityEvent chat_blocked failed', e); }
+      }
       try {
+        if (sender?.tab?.id && message.isChat) {
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: sender.tab.id },
+              func: (snippet) => {
+                try {
+                  if (!snippet) return;
+                  const els = Array.from(document.querySelectorAll('body *'));
+                  let found = null;
+                  for (const e of els) {
+                    if (e.children.length === 0 && e.innerText && e.innerText.indexOf(snippet) !== -1) { found = e; break; }
+                  }
+                  if (!found) {
+                    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null);
+                    while (walker.nextNode()) {
+                      const n = walker.currentNode;
+                      if (n.nodeValue && n.nodeValue.indexOf(snippet) !== -1) {
+                        if (n.parentElement) { found = n.parentElement; break; }
+                      }
+                    }
+                  }
+                  if (found) {
+                    found.textContent = '⚠️ This message was blocked by GuardianLens';
+                    found.style.transition = 'filter .2s ease';
+                    found.style.filter = 'blur(2px)';
+                    found.setAttribute('data-gl-redacted', '1');
+                  }
+                } catch (e) { /* ignore */ }
+              },
+              args: [snippet]
+            });
+          } catch (e) { console.warn('[Analysis] redact script failed', e); }
+        }
         if (sender?.tab?.id) {
           const redirectUrl = chrome.runtime.getURL('blocked.html') + `?url=${encodeURIComponent(url)}&category=${encodeURIComponent(returnedCategory || 'Restricted content')}&reason=${encodeURIComponent(result.child_message || result.parent_report || '')}`;
           await chrome.tabs.update(sender.tab.id, { url: redirectUrl });
@@ -800,23 +786,65 @@ async function handleAnalyzePageRequest(message, sender) {
     }
 
     // ── WARN ──────────────────────────────────────────────────────────────
-    if (action === 'warn' && confidence >= 0.50) {
-      console.log(`[Analysis] ⚠️ WARN — category: ${returnedCategory}, confidence: ${confidence}`);
-      await notifyParent({ url, category: returnedCategory || 'risky_content', parent_report: result.parent_report || `Content on ${domain} (${returnedCategory})`, trigger_words: result.trigger_words || [] });
+if (action === 'warn' && (confidence >= 0.50 || (message.isChat && confidence >= 0.20))) {        console.log(`[Analysis] ⚠️ WARN — category: ${returnedCategory}, confidence: ${confidence}`);
+      const snippet = message.isChat ? (message.text ? String(message.text).slice(0, 1000) : '') : '';
+      await notifyParent({ url, category: returnedCategory || 'risky_content', parent_report: result.parent_report || `Content on ${domain} (${returnedCategory})`, trigger_words: result.trigger_words || [], flagged_snippet: snippet });
+      if (message.isChat) {
+        try { await captureActivityEvent('chat_warn', domain, { snippet, trigger_words: result.trigger_words || [] }); } catch (e) { console.warn('[Analysis] captureActivityEvent chat_warn failed', e); }
+      }
+      // Highlight trigger words in chat if isChat
+      if (sender?.tab?.id && message.isChat) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: sender.tab.id },
+            func: (snippet, triggerWords) => {
+              try {
+                if (!triggerWords || !triggerWords.length) return;
+                const safeWords = triggerWords.filter(Boolean).slice(0, 20);
+                if (safeWords.length === 0) return;
+                const regex = new RegExp('(' + safeWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+                function highlightNode(el) {
+                  if (!el || (el.getAttribute && el.getAttribute('data-gl-highlighted'))) return;
+                  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+                  const nodes = [];
+                  while (walker.nextNode()) nodes.push(walker.currentNode);
+                  nodes.forEach(tnode => {
+                    const val = tnode.nodeValue;
+                    if (!val || !regex.test(val)) return;
+                    const wrapper = document.createElement('span');
+                    wrapper.innerHTML = val.replace(regex, '<span style="background: #fff59d; padding:0 2px; border-radius:3px;">$1</span>');
+                    tnode.parentNode.replaceChild(wrapper, tnode);
+                  });
+                  el.setAttribute('data-gl-highlighted', '1');
+                }
+                let candidates = [];
+                if (snippet) {
+                  candidates = Array.from(document.querySelectorAll('body *')).filter(e => e.children.length === 0 && e.innerText && e.innerText.indexOf(snippet) !== -1);
+                }
+                if (candidates.length === 0) {
+                  candidates = Array.from(document.querySelectorAll('body *')).filter(e => e.children.length === 0 && e.innerText && regex.test(e.innerText));
+                }
+                candidates.slice(0, 10).forEach(el => highlightNode(el));
+              } catch (e) { /* ignore */ }
+            },
+            args: [snippet, result.trigger_words || []]
+          });
+        } catch (e) { console.warn('[Analysis] highlight script failed', e); }
+      }
       try {
-  if (sender?.tab?.id) {
-    await chrome.scripting.executeScript({
-      target: { tabId: sender.tab.id },
-      func: (u, cat, rsn) => { window.gl_warning_data = { url: u, category: cat, reason: rsn }; },
-      args: [url, returnedCategory || result.category || 'Potentially inappropriate', result.child_message || result.parent_report || '']
-    });
-    await chrome.scripting.executeScript({
-      target: { tabId: sender.tab.id },
-      files: ['warning-overlay.js']
-    });
-  }
-} catch (e) { console.warn('[Analysis] Failed to inject warning overlay:', e); }
-  return { received: true, safe: false, action: 'warn', category: returnedCategory || 'Potentially inappropriate', child_message: result.child_message || 'This page has some content worth knowing about.', confidence, stage: result.stage || 2 };
+        if (sender?.tab?.id) {
+          await chrome.scripting.executeScript({
+            target: { tabId: sender.tab.id },
+            func: (u, cat, rsn) => { window.gl_warning_data = { url: u, category: cat, reason: rsn }; },
+            args: [url, returnedCategory || result.category || 'Potentially inappropriate', result.child_message || result.parent_report || '']
+          });
+          await chrome.scripting.executeScript({
+            target: { tabId: sender.tab.id },
+            files: ['warning-overlay.js']
+          });
+        }
+      } catch (e) { console.warn('[Analysis] Failed to inject warning overlay:', e); }
+      return { received: true, safe: false, action: 'warn', category: returnedCategory || 'Potentially inappropriate', child_message: result.child_message || 'This page has some content worth knowing about.', confidence, stage: result.stage || 2 };
     }
 
     // ── SAFE ──────────────────────────────────────────────────────────────
