@@ -77,11 +77,13 @@ async def startup_event():
         asyncio.create_task(run_retention_jobs())
 
     # Load ML models in background so first request is fast
+# Load ML models in background so first request is fast
     import threading
+    import os
     from .services.pipeline import load_models
-    thread = threading.Thread(target=load_models, daemon=True)
-    thread.start()
-
+    if os.getenv("LOAD_MODELS", "false").lower() == "true":
+        thread = threading.Thread(target=load_models, daemon=True)
+        thread.start()
     logger.info("GuardianCore backend started successfully")
 
 
