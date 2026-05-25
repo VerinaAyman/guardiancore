@@ -80,11 +80,22 @@ function fillInfo() {
   const rsnEl = document.getElementById('infoReason');
   const urlEl = document.getElementById('infoUrl');
 
-  if (catEl) catEl.textContent = category || 'Unknown';
-  if (rsnEl) rsnEl.textContent = reason   || 'Policy violation';
-  if (urlEl) urlEl.textContent = rawUrl   || 'Unknown URL';
-}
+  const categoryLabels = {
+    'blocked_keyword': 'Restricted Content',
+    'groq_classification': 'AI Detected',
+    'url_keywords': 'Restricted Content',
+    'adult_content': 'Adult Content',
+    'violence': 'Violence',
+    'gambling': 'Gambling',
+    'drugs': 'Drugs',
+    'social_media': 'Social Media',
+    'time_restriction': 'Time Restriction'
+  };
 
+  if (catEl) catEl.textContent = categoryLabels[category] || category || 'Unknown';
+  if (rsnEl) rsnEl.textContent = reason || 'Policy violation';
+  if (urlEl) urlEl.textContent = rawUrl || 'Unknown URL';
+}
 // ── Parent notification ──
 function notifyParent() {
   if (typeof chrome !== 'undefined' && chrome.runtime) {

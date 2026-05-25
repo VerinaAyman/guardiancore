@@ -36,6 +36,22 @@ class ContentAnalysisResponse(BaseModel):
     stage: Optional[int] = None
 
 
+# ── NEW: Chat analysis models ──────────────────────────────────────────────────
+class ChatAnalysisRequest(BaseModel):
+    url: str = Field(default="", description="Platform URL e.g. web.whatsapp.com")
+    messages: str = Field(..., description="Chat messages to analyze")
+    child_age: int = Field(default=13)
+
+
+class ChatAnalysisResponse(BaseModel):
+    safe: bool
+    action: str
+    category: Optional[str] = None
+    confidence: Optional[float] = None
+    reason: Optional[str] = None
+    detected_patterns: Optional[list] = None
+
+
 def extract_domain(url: str) -> str:
     try:
         parsed = urlparse(url)
@@ -73,13 +89,13 @@ async def analyze_content(
                 if allowlist_result.fetchone():
                     return ContentAnalysisResponse(safe=True, action="none")
 
-        # Layer 1: URL keyword check
+        # Layer 1: URL keyword check + Groq classification
         text_content = request.text_content[:2000] if request.text_content else ""
         result = await classifier.predict(request.url, text_content)
 
         logger.info(f"[Analysis] Classifier result: safe={result['safe']} | blocked_by={result.get('blocked_by')} | action={result.get('action')} | category={result.get('category')}")
 
-        # If Groq ran, use its decision directly (safe OR unsafe)
+        # If Groq ran, use its decision directly
         if result.get('blocked_by') == 'groq_classification':
             groq_action = result.get('action', 'none')
             groq_category = result.get('category', '')
@@ -87,51 +103,34 @@ async def analyze_content(
 
             if groq_action == 'block':
                 return ContentAnalysisResponse(
-                    safe=False,
-                    action='block',
-                    blocked_by='groq_classification',
-                    category=groq_category,
-                    confidence=groq_confidence,
-                    domain=domain,
-                    risk_score=groq_confidence
+                    safe=False, action='block', blocked_by='groq_classification',
+                    category=groq_category, confidence=groq_confidence,
+                    domain=domain, risk_score=groq_confidence
                 )
             elif groq_action == 'warn':
                 return ContentAnalysisResponse(
-                    safe=False,
-                    action='warn',
-                    blocked_by='groq_classification',
-                    category=groq_category,
-                    confidence=groq_confidence,
-                    domain=domain,
-                    risk_score=groq_confidence
+                    safe=False, action='warn', blocked_by='groq_classification',
+                    category=groq_category, confidence=groq_confidence,
+                    domain=domain, risk_score=groq_confidence
                 )
             else:
                 return ContentAnalysisResponse(
-                    safe=True,
-                    action='none',
-                    blocked_by=None,
-                    category=groq_category,
-                    confidence=groq_confidence,
-                    domain=domain,
-                    risk_score=groq_confidence
+                    safe=True, action='none', blocked_by=None,
+                    category=groq_category, confidence=groq_confidence,
+                    domain=domain, risk_score=groq_confidence
                 )
 
         # If URL keyword blocked, always block
         if result.get('blocked_by') == 'url_keywords':
             return ContentAnalysisResponse(
-                safe=False,
-                action='block',
-                blocked_by='url_keywords',
-                category=result.get('category'),
-                confidence=result.get('confidence'),
-                domain=domain,
-                risk_score=1.0
+                safe=False, action='block', blocked_by='url_keywords',
+                category=result.get('category'), confidence=result.get('confidence'),
+                domain=domain, risk_score=1.0
             )
 
         if not result["safe"] and result.get("blocked_by") == "url_keywords" and (result.get("confidence") or 0.0) < BLOCK_THRESHOLD:
             return ContentAnalysisResponse(
-                safe=True,
-                action="none",
+                safe=True, action="none",
                 blocked_by=result.get("blocked_by"),
                 category=result.get("category"),
                 confidence=result.get("confidence"),
@@ -185,7 +184,6 @@ async def analyze_content(
                 except Exception as db_error:
                     logger.error(f"[Analysis] Rule creation failed: {db_error}")
 
-            # Generate narrative even for fast-path blocks
             narrative = {"stage": 3, "parent_report": "", "child_message": ""}
             if text_content:
                 from ..services.pipeline import phase4_generate_narrative
@@ -198,8 +196,7 @@ async def analyze_content(
                 )
 
             return ContentAnalysisResponse(
-                safe=False,
-                action="blocked",
+                safe=False, action="blocked",
                 blocked_by=result["blocked_by"],
                 category=result.get("category"),
                 confidence=result.get("confidence"),
@@ -218,6 +215,37 @@ async def analyze_content(
     except Exception as e:
         logger.error(f"[Analysis] Failed, allowing (fail-open): {e}", exc_info=True)
         return ContentAnalysisResponse(safe=True, action="none")
+
+
+# ── NEW: Chat grooming/slang detection endpoint ────────────────────────────────
+@router.post("/chat", response_model=ChatAnalysisResponse)
+async def analyze_chat(
+    request: ChatAnalysisRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        groq_result = await classifier._classify_with_groq(
+            url=request.url or "chat",
+            text_content=request.messages,
+            child_age=request.child_age,
+            is_chat=True
+        )
+
+        if not groq_result:
+            return ChatAnalysisResponse(safe=True, action="none")
+
+        action = groq_result.get('action', 'none')
+        return ChatAnalysisResponse(
+            safe=(action == 'none'),
+            action=action,
+            category=groq_result.get('category'),
+            confidence=groq_result.get('confidence'),
+            reason=groq_result.get('reason'),
+            detected_patterns=groq_result.get('detected_patterns', [])
+        )
+    except Exception as e:
+        logger.error(f"[Chat Analysis] Failed: {e}", exc_info=True)
+        return ChatAnalysisResponse(safe=True, action="none")
 
 
 @router.get("/health")

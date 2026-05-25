@@ -11,7 +11,7 @@ async function ensureDefaultConfig() {
     ]);
     if (!gl_config_initialized) {
       const defaults = {};
-      if (!gc_backend_url) defaults.gc_backend_url = 'http://localhost:8000';
+      if (!gc_backend_url) defaults.gc_backend_url = 'https://guardiancore-production.up.railway.app';
       if (Object.keys(defaults).length > 0) await chrome.storage.local.set(defaults);
       await chrome.storage.local.set({ gl_config_initialized: true });
     }
@@ -30,7 +30,7 @@ async function initializeAuth() {
   }
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore-production.up.railway.app';
     const response = await fetch(`${backendUrl}/auth/verify`, {
       method: 'POST', headers: { 'Authorization': `Bearer ${gc_auth_token}` }
     });
@@ -168,7 +168,7 @@ async function captureActivityEvent(eventType, domain, additionalData = {}) {
   try {
     if (!currentUser || currentUser.account_type !== 'child') return;
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore-production.up.railway.app';
     const response = await fetch(`${backendUrl}/activity/events`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
@@ -236,7 +236,7 @@ let rulesCache = { allowlist: [], blocklist: [], time_window: [], lastFetch: 0 }
 async function loadChildRules(childId, token) {
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore-production.up.railway.app';
     const url = `${backendUrl}/accounts/rules/combined/child/${childId}`;
     console.log("[Rules] Fetching:", url);
     const response = await fetch(url, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -486,11 +486,27 @@ chrome.runtime.onStartup.addListener(async () => {
 chrome.runtime.onConnect.addListener((port) => { if (port.name === "popup") scheduleBackgroundUpdate(); });
 
 // ========== PARENT NOTIFICATION ==========
+
+// Debounce: only notify once per url+category combo within 5 minutes
+const notifyDebounce = new Map();
+const NOTIFY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
 async function notifyParent({ url, category, parent_report, trigger_words, flagged_snippet }) {
   try {
     if (!currentUser || currentUser.account_type !== 'child') return;
+
+    // Debounce check — skip if we already notified for this url+category recently
+    const debounceKey = `${url}|${category}`;
+    const lastNotify = notifyDebounce.get(debounceKey) || 0;
+    if (Date.now() - lastNotify < NOTIFY_COOLDOWN_MS) {
+      console.log('[Notify] Skipping — already notified recently for:', debounceKey);
+      return;
+    }
+    notifyDebounce.set(debounceKey, Date.now());
+    if (notifyDebounce.size > 50) notifyDebounce.delete(notifyDebounce.keys().next().value);
+
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore-production.up.railway.app';
     await fetch(`${backendUrl}/notify/parent-report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
@@ -710,13 +726,19 @@ async function handleAnalyzePageRequest(message, sender) {
 
   try {
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
-    const backendUrl = gc_backend_url || 'http://localhost:8000';
+    const backendUrl = gc_backend_url || 'https://guardiancore-production.up.railway.app';
     console.log(`[Analysis] Sending request for: ${domain}`);
 
-    const response = await fetch(`${backendUrl}/analyze/content`, {
+    const isChat = !!message.isChat;
+    const endpoint = isChat ? '/analyze/chat' : '/analyze/content';
+    const body = isChat
+      ? JSON.stringify({ url, messages: message.text, child_age: 13 })
+      : JSON.stringify({ url, text_content: message.text, child_age: 13, sensitivity: 'high', check_slang: true, check_intent: true });
+
+    const response = await fetch(`${backendUrl}${endpoint}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${authToken}` },
-      body: JSON.stringify({ url, text_content: message.text, child_age: 13, sensitivity: 'high', check_slang: true, check_intent: true })
+      body
     });
 
     if (!response.ok) { console.error(`[Analysis] Backend error: ${response.status}`); return { received: true, error: "backend_error" }; }
@@ -731,7 +753,7 @@ async function handleAnalyzePageRequest(message, sender) {
 
     console.log(`[Analysis] Category: "${returnedCategory}" → Action: ${action} | Confidence: ${confidence} | Risk: ${riskScore}`);
 
-    // ── HARD BLOCK ────────────────────────────────────────────────────────
+    // ── HARD BLOCK ──────────────────────────────────────────────────────
     if (action === 'block') {
       console.log(`[Analysis] 🚫 BLOCK — category: ${returnedCategory}, confidence: ${confidence}`);
       await loadChildRules(currentUser.user_id, currentUser.token);
@@ -785,14 +807,14 @@ async function handleAnalyzePageRequest(message, sender) {
       return { received: true, safe: false, action: 'block', category: returnedCategory || 'Restricted content', child_message: result.child_message || '', confidence, stage: result.stage || 3 };
     }
 
-    // ── WARN ──────────────────────────────────────────────────────────────
-if (action === 'warn' && (confidence >= 0.50 || (message.isChat && confidence >= 0.20))) {        console.log(`[Analysis] ⚠️ WARN — category: ${returnedCategory}, confidence: ${confidence}`);
+    // ── WARN ────────────────────────────────────────────────────────────
+    if (action === 'warn' && (confidence >= 0.50 || (message.isChat && confidence >= 0.20))) {
+      console.log(`[Analysis] ⚠️ WARN — category: ${returnedCategory}, confidence: ${confidence}`);
       const snippet = message.isChat ? (message.text ? String(message.text).slice(0, 1000) : '') : '';
       await notifyParent({ url, category: returnedCategory || 'risky_content', parent_report: result.parent_report || `Content on ${domain} (${returnedCategory})`, trigger_words: result.trigger_words || [], flagged_snippet: snippet });
       if (message.isChat) {
         try { await captureActivityEvent('chat_warn', domain, { snippet, trigger_words: result.trigger_words || [] }); } catch (e) { console.warn('[Analysis] captureActivityEvent chat_warn failed', e); }
       }
-      // Highlight trigger words in chat if isChat
       if (sender?.tab?.id && message.isChat) {
         try {
           await chrome.scripting.executeScript({
@@ -847,7 +869,7 @@ if (action === 'warn' && (confidence >= 0.50 || (message.isChat && confidence >=
       return { received: true, safe: false, action: 'warn', category: returnedCategory || 'Potentially inappropriate', child_message: result.child_message || 'This page has some content worth knowing about.', confidence, stage: result.stage || 2 };
     }
 
-    // ── SAFE ──────────────────────────────────────────────────────────────
+    // ── SAFE ────────────────────────────────────────────────────────────
     console.log(`[Analysis] ✅ SAFE — category: ${returnedCategory}, confidence: ${confidence}`);
     return { received: true, safe: true, action: 'none', confidence, category: returnedCategory };
 
