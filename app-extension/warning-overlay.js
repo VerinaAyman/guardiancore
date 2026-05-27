@@ -327,26 +327,51 @@
   document.getElementById('gl-warn-close').addEventListener('click', dismissOverlay);
   backdrop.addEventListener('click', dismissOverlay);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') dismissOverlay(); });
-
-  document.getElementById('gl-open-lens-btn').addEventListener('click', () => {
-    dismissOverlay();
-    setTimeout(() => {
-      const fab = document.getElementById('gl-fab');
-      if (fab) {
-        fab.click();
-        setTimeout(() => {
-          const panel = document.getElementById('gl-panel');
-          if (panel && !panel.classList.contains('open')) {
-            fab.click();
+document.getElementById('gl-open-lens-btn').addEventListener('click', () => {
+  dismissOverlay();
+  setTimeout(() => {
+    const fab = document.getElementById('gl-fab');
+    if (fab) {
+      fab.click();
+      // Wait longer for panel to fully open and render
+      setTimeout(() => {
+        chrome.runtime.sendMessage({
+          type: 'LENS_GROQ_REQUEST',
+          systemPrompt: `You are GuardianLens, a friendly AI safety assistant for kids. 
+A warning was just shown to the child and they clicked to learn more. 
+Proactively explain the warning in a calm, age-appropriate way in 2-3 sentences. 
+Warning: Category: ${category}. Reason: ${reason}. Site: ${siteDomain}.`,
+          history: [
+            { role: 'user', content: 'explain the warning' }
+          ]
+        }, (response) => {
+          if (!response?.reply) return;
+          // Find the messages container
+          const messages = document.getElementById('gl-messages');
+          if (!messages) {
+            console.warn('[GL] gl-messages not found');
+            return;
           }
-          const input = document.getElementById('gl-input');
-          if (input) {
-            input.focus();
-            input.placeholder = 'Ask about this warning...';
-          }
-        }, 300);
-      }
-    }, 450);
-  });
+          // Create bubble matching your existing chat style
+          const bubble = document.createElement('div');
+          bubble.style.cssText = `
+            background: #1e293b;
+            color: #e2e8f0;
+            padding: 10px 14px;
+            border-radius: 12px;
+            margin: 8px 4px;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            max-width: 90%;
+            align-self: flex-start;
+          `;
+          bubble.textContent = response.reply;
+          messages.appendChild(bubble);
+          messages.scrollTop = messages.scrollHeight;
+        });
+      }, 700);
+    }
+  }, 450);
+});
 
 })();

@@ -1,13 +1,21 @@
-// GuardianLens Background Service Worker — v0.7.0
-console.log("GuardianLens Background v0.7.0 loaded");
+// GuardianLens Background Service Worker — v0.7.1
+// 🔧 fixes:
+//    - LENS_TRIGGER now fired to tab on both warn and escalate (lens-bubble activation)
+//    - warning-overlay.js injection race condition fixed (single executeScript)
+//    - Chat warn confidence threshold raised to 0.35 (was 0.20 — too noisy)
+//    - LENS_ESCALATE handler now also fires LENS_TRIGGER with risk:100 to tab
+//    - Sign-up gate: gl_parent_token stored on successful auth for lens-bubble check
+//    - Minor: sendMessage catches cleaned up
+
+console.log("GuardianLens Background v0.7.1 loaded");
 
 // ========== AUTHENTICATION STATE ==========
 let currentUser = null;
 
 async function ensureDefaultConfig() {
   try {
-    const { gc_backend_url, gl_api_token, gl_config_initialized } = await chrome.storage.local.get([
-      'gc_backend_url', 'gl_api_token', 'gl_config_initialized'
+    const { gc_backend_url, gl_config_initialized } = await chrome.storage.local.get([
+      'gc_backend_url', 'gl_config_initialized'
     ]);
     if (!gl_config_initialized) {
       const defaults = {};
@@ -41,6 +49,10 @@ async function initializeAuth() {
       return false;
     }
     currentUser = { user_id: gc_user_id, account_type: gc_account_type, token: gc_auth_token, username: gc_username };
+
+    // ✅ Store gl_parent_token so lens-bubble.js signup gate can check auth
+    await chrome.storage.local.set({ gl_parent_token: gc_auth_token });
+
     if (currentUser.account_type === 'child') {
       fetch(`${backendUrl}/accounts/profile`, {
         headers: { 'Authorization': 'Bearer ' + currentUser.token }
@@ -443,8 +455,6 @@ chrome.webNavigation.onCompleted.addListener(async (nav) => {
   } catch (e) { console.error("Audit submit error:", e); }
 });
 
-chrome.tabs.onRemoved.addListener((tabId) => { tabState.delete(tabId); });
-
 async function fetchStats() {
   try {
     if (!currentUser) return;
@@ -487,15 +497,12 @@ chrome.runtime.onConnect.addListener((port) => { if (port.name === "popup") sche
 
 // ========== PARENT NOTIFICATION ==========
 
-// Debounce: only notify once per url+category combo within 5 minutes
 const notifyDebounce = new Map();
-const NOTIFY_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+const NOTIFY_COOLDOWN_MS = 5 * 60 * 1000;
 
 async function notifyParent({ url, category, parent_report, trigger_words, flagged_snippet }) {
   try {
     if (!currentUser || currentUser.account_type !== 'child') return;
-
-    // Debounce check — skip if we already notified for this url+category recently
     const debounceKey = `${url}|${category}`;
     const lastNotify = notifyDebounce.get(debounceKey) || 0;
     if (Date.now() - lastNotify < NOTIFY_COOLDOWN_MS) {
@@ -504,23 +511,32 @@ async function notifyParent({ url, category, parent_report, trigger_words, flagg
     }
     notifyDebounce.set(debounceKey, Date.now());
     if (notifyDebounce.size > 50) notifyDebounce.delete(notifyDebounce.keys().next().value);
-
     const { gc_backend_url } = await chrome.storage.local.get('gc_backend_url');
     const backendUrl = gc_backend_url || 'https://guardiancore-production.up.railway.app';
     await fetch(`${backendUrl}/notify/parent-report`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-      body: JSON.stringify({
-        child_id: currentUser.user_id,
-        url,
-        category,
-        parent_report: parent_report || '',
-        trigger_words: trigger_words || [],
-        flagged_snippet: flagged_snippet || ''
-      })
+      body: JSON.stringify({ child_id: currentUser.user_id, url, category, parent_report: parent_report || '', trigger_words: trigger_words || [], flagged_snippet: flagged_snippet || '' })
     });
     console.log('[Notify] Parent notified for:', url);
   } catch (e) { console.warn('[Notify] Parent notification failed:', e); }
+}
+
+// ========== LENS TRIGGER HELPER ==========
+// ✅ Central function — all warn/escalate paths go through here to activate lens-bubble.js
+async function fireLensTrigger(tabId, { risk, category, reason, domain }) {
+  try {
+    await chrome.tabs.sendMessage(tabId, {
+      type:     'LENS_TRIGGER',
+      risk:     Math.round(risk),        // 0–100 integer
+      category: category || 'General concern',
+      reason:   reason  || '',
+      domain:   domain  || ''
+    });
+    console.log(`[Lens] LENS_TRIGGER fired → tab ${tabId} (risk:${risk}, cat:${category})`);
+  } catch (e) {
+    console.warn('[Lens] fireLensTrigger failed (tab may have navigated):', e.message);
+  }
 }
 
 // ========== UNIFIED MESSAGE LISTENER ==========
@@ -545,7 +561,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   } else if (message.type === "LOGOUT") {
     currentUser = null;
     rulesCache = { allowlist: [], blocklist: [], time_window: [], lastFetch: 0 };
-    chrome.storage.local.remove(['gc_auth_token','gc_user_id','gc_account_type','gc_username','gc_email','gc_pin','gc_recovery_codes','gc_pin_verified']).then(async () => {
+    // ✅ Also clear signup gate token on logout
+    chrome.storage.local.remove(['gc_auth_token','gc_user_id','gc_account_type','gc_username','gc_email','gc_pin','gc_recovery_codes','gc_pin_verified','gl_parent_token']).then(async () => {
       const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL('login.html') });
       if (tabs.length === 0) chrome.tabs.create({ url: chrome.runtime.getURL('login.html') });
       sendResponse({ ok: true });
@@ -633,12 +650,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ ok: true });
 
   } else if (message.type === "LENS_ESCALATE") {
+    // ✅ Now also fires LENS_TRIGGER back to the tab so lens-bubble enters escalate mode
     console.log(`[Lens] 🚨 ESCALATION for ${message.domain}`);
-    const domain    = message.domain || extractDomain(message.url) || 'unknown';
-    const escalUrl  = message.url    || `https://${domain}`;
-    const escalCat  = message.category || 'high_risk';
+    const domain   = message.domain || extractDomain(message.url) || 'unknown';
+    const escalUrl = message.url    || `https://${domain}`;
+    const escalCat = message.category || 'high_risk';
     const childName = currentUser?.username || 'Your child';
-    notifyParent({ url: escalUrl, category: escalCat, parent_report: `GuardianLens flagged high-risk content. ${childName} visited "${escalCat}" on ${domain}.`, trigger_words: message.trigger_words || [] });
+
+    notifyParent({
+      url: escalUrl, category: escalCat,
+      parent_report: `GuardianLens flagged high-risk content. ${childName} visited "${escalCat}" on ${domain}.`,
+      trigger_words: message.trigger_words || []
+    });
     captureActivityEvent('escalation', domain, { category: escalCat, url: escalUrl, risk_level: 'high', child_name: childName });
     chrome.notifications?.create?.(`gl-escalate-${Date.now()}`, {
       type: 'basic', iconUrl: chrome.runtime.getURL('icons/icon.svg'),
@@ -646,6 +669,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       message: `${childName} visited high-risk content on ${domain}. Tap to open the dashboard.`,
       priority: 2, requireInteraction: true
     });
+
+    // ✅ Fire LENS_TRIGGER to the originating tab so the bubble shows escalate mode
+    if (sender?.tab?.id) {
+      fireLensTrigger(sender.tab.id, { risk: 100, category: escalCat, reason: message.reason || '', domain });
+    }
     console.log(`[Lens] ✅ Parent notified: ${domain}`);
     sendResponse({ ok: true });
 
@@ -693,8 +721,8 @@ async function handleAnalyzePageRequest(message, sender) {
     'gc_auth_token', 'gc_username', 'gc_account_type',
     'gc_user_id', 'gc_backend_url', 'gc_child_id'
   ]);
-  const authToken = stored.gc_auth_token;
-  const username = stored.gc_username;
+  const authToken   = stored.gc_auth_token;
+  const username    = stored.gc_username;
   const accountType = stored.gc_account_type;
 
   if (!authToken || accountType !== 'child') {
@@ -746,10 +774,10 @@ async function handleAnalyzePageRequest(message, sender) {
     const result = await response.json();
     console.log("[Analysis] Result:", result);
 
-    const action = result.action || 'none';
-    const confidence = result.confidence || 0;
-    const riskScore = result.risk_score || 0;
-    const returnedCategory = result.category || '';
+    const action           = result.action     || 'none';
+    const confidence       = result.confidence || 0;
+    const riskScore        = result.risk_score || 0;
+    const returnedCategory = result.category   || '';
 
     console.log(`[Analysis] Category: "${returnedCategory}" → Action: ${action} | Confidence: ${confidence} | Risk: ${riskScore}`);
 
@@ -760,13 +788,14 @@ async function handleAnalyzePageRequest(message, sender) {
       await updateDynamicBlockingRules();
       await captureBlockedAttempt(url, returnedCategory || 'ai_blocked', 'AI Detection');
       awardXp({ trackers: 0, csp: false, cors: false, blocked: true, violation: true });
-      const snippet = message.isChat ? (message.text ? String(message.text).slice(0, 1000) : '') : '';
+      const snippet = isChat ? (message.text ? String(message.text).slice(0, 1000) : '') : '';
       await notifyParent({ url, category: returnedCategory || 'ai_blocked', parent_report: result.parent_report || '', trigger_words: result.trigger_words || [], flagged_snippet: snippet });
-      if (message.isChat) {
+      if (isChat) {
         try { await captureActivityEvent('chat_blocked', extractDomain(url), { snippet, trigger_words: result.trigger_words || [] }); } catch (e) { console.warn('[Analysis] captureActivityEvent chat_blocked failed', e); }
       }
       try {
-        if (sender?.tab?.id && message.isChat) {
+        if (sender?.tab?.id && isChat) {
+          // Redact the blocked message in the DOM
           try {
             await chrome.scripting.executeScript({
               target: { tabId: sender.tab.id },
@@ -808,65 +837,86 @@ async function handleAnalyzePageRequest(message, sender) {
     }
 
     // ── WARN ────────────────────────────────────────────────────────────
-    if (action === 'warn' && (confidence >= 0.50 || (message.isChat && confidence >= 0.20))) {
+    // ✅ Confidence threshold: 0.50 for pages, 0.35 for chat (was 0.20 — too noisy)
+    if (action === 'warn' && (confidence >= 0.50 || (isChat && confidence >= 0.35))) {
       console.log(`[Analysis] ⚠️ WARN — category: ${returnedCategory}, confidence: ${confidence}`);
-      const snippet = message.isChat ? (message.text ? String(message.text).slice(0, 1000) : '') : '';
-      await notifyParent({ url, category: returnedCategory || 'risky_content', parent_report: result.parent_report || `Content on ${domain} (${returnedCategory})`, trigger_words: result.trigger_words || [], flagged_snippet: snippet });
-      if (message.isChat) {
-        try { await captureActivityEvent('chat_warn', domain, { snippet, trigger_words: result.trigger_words || [] }); } catch (e) { console.warn('[Analysis] captureActivityEvent chat_warn failed', e); }
+      const snippet = isChat ? (message.text ? String(message.text).slice(0, 1000) : '') : '';
+
+      await notifyParent({
+        url, category: returnedCategory || 'risky_content',
+        parent_report: result.parent_report || `Content on ${domain} (${returnedCategory})`,
+        trigger_words: result.trigger_words || [],
+        flagged_snippet: snippet
+      });
+
+      if (isChat) {
+        try { await captureActivityEvent('chat_warn', domain, { snippet, trigger_words: result.trigger_words || [] }); }
+        catch (e) { console.warn('[Analysis] captureActivityEvent chat_warn failed', e); }
       }
-      if (sender?.tab?.id && message.isChat) {
-        try {
-          await chrome.scripting.executeScript({
-            target: { tabId: sender.tab.id },
-            func: (snippet, triggerWords) => {
-              try {
-                if (!triggerWords || !triggerWords.length) return;
-                const safeWords = triggerWords.filter(Boolean).slice(0, 20);
-                if (safeWords.length === 0) return;
-                const regex = new RegExp('(' + safeWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
-                function highlightNode(el) {
-                  if (!el || (el.getAttribute && el.getAttribute('data-gl-highlighted'))) return;
-                  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
-                  const nodes = [];
-                  while (walker.nextNode()) nodes.push(walker.currentNode);
-                  nodes.forEach(tnode => {
-                    const val = tnode.nodeValue;
-                    if (!val || !regex.test(val)) return;
-                    const wrapper = document.createElement('span');
-                    wrapper.innerHTML = val.replace(regex, '<span style="background: #fff59d; padding:0 2px; border-radius:3px;">$1</span>');
-                    tnode.parentNode.replaceChild(wrapper, tnode);
-                  });
-                  el.setAttribute('data-gl-highlighted', '1');
-                }
-                let candidates = [];
-                if (snippet) {
-                  candidates = Array.from(document.querySelectorAll('body *')).filter(e => e.children.length === 0 && e.innerText && e.innerText.indexOf(snippet) !== -1);
-                }
-                if (candidates.length === 0) {
-                  candidates = Array.from(document.querySelectorAll('body *')).filter(e => e.children.length === 0 && e.innerText && regex.test(e.innerText));
-                }
-                candidates.slice(0, 10).forEach(el => highlightNode(el));
-              } catch (e) { /* ignore */ }
-            },
-            args: [snippet, result.trigger_words || []]
-          });
-        } catch (e) { console.warn('[Analysis] highlight script failed', e); }
-      }
-      try {
-        if (sender?.tab?.id) {
-          await chrome.scripting.executeScript({
-            target: { tabId: sender.tab.id },
-            func: (u, cat, rsn) => { window.gl_warning_data = { url: u, category: cat, reason: rsn }; },
-            args: [url, returnedCategory || result.category || 'Potentially inappropriate', result.child_message || result.parent_report || '']
-          });
-          await chrome.scripting.executeScript({
-            target: { tabId: sender.tab.id },
-            files: ['warning-overlay.js']
-          });
+
+      if (sender?.tab?.id) {
+        // Highlight trigger words in DOM
+        if (isChat) {
+          try {
+            await chrome.scripting.executeScript({
+              target: { tabId: sender.tab.id },
+              func: (snippet, triggerWords) => {
+                try {
+                  if (!triggerWords || !triggerWords.length) return;
+                  const safeWords = triggerWords.filter(Boolean).slice(0, 20);
+                  if (safeWords.length === 0) return;
+                  const regex = new RegExp('(' + safeWords.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|') + ')', 'gi');
+                  function highlightNode(el) {
+                    if (!el || (el.getAttribute && el.getAttribute('data-gl-highlighted'))) return;
+                    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+                    const nodes = [];
+                    while (walker.nextNode()) nodes.push(walker.currentNode);
+                    nodes.forEach(tnode => {
+                      const val = tnode.nodeValue;
+                      if (!val || !regex.test(val)) return;
+                      const wrapper = document.createElement('span');
+                      wrapper.innerHTML = val.replace(regex, '<span style="background:#fff59d;padding:0 2px;border-radius:3px;">$1</span>');
+                      tnode.parentNode.replaceChild(wrapper, tnode);
+                    });
+                    el.setAttribute('data-gl-highlighted', '1');
+                  }
+                  let candidates = [];
+                  if (snippet) {
+                    candidates = Array.from(document.querySelectorAll('body *')).filter(e => e.children.length === 0 && e.innerText && e.innerText.indexOf(snippet) !== -1);
+                  }
+                  if (candidates.length === 0) {
+                    candidates = Array.from(document.querySelectorAll('body *')).filter(e => e.children.length === 0 && e.innerText && regex.test(e.innerText));
+                  }
+                  candidates.slice(0, 10).forEach(el => highlightNode(el));
+                } catch (e) { /* ignore */ }
+              },
+              args: [snippet, result.trigger_words || []]
+            });
+          } catch (e) { console.warn('[Analysis] highlight script failed', e); }
         }
-      } catch (e) { console.warn('[Analysis] Failed to inject warning overlay:', e); }
-      return { received: true, safe: false, action: 'warn', category: returnedCategory || 'Potentially inappropriate', child_message: result.child_message || 'This page has some content worth knowing about.', confidence, stage: result.stage || 2 };
+
+        // ✅ Fire LENS_TRIGGER to activate lens-bubble in warn mode
+        // Single executeScript replaces the old two-step gl_warning_data + inject race condition
+        const reasonText =
+          result.child_message ||
+          (result.trigger_words?.length ? `Detected: ${result.trigger_words.slice(0, 3).join(', ')}` : '') ||
+          result.parent_report ||
+          'Content flagged for review';
+
+        await fireLensTrigger(sender.tab.id, {
+          risk:     Math.round((riskScore || confidence) * 100),
+          category: returnedCategory || 'Potentially inappropriate',
+          reason:   reasonText,
+          domain
+        });
+      }
+
+      return {
+        received: true, safe: false, action: 'warn',
+        category: returnedCategory || 'Potentially inappropriate',
+        child_message: result.child_message || 'This page has some content worth knowing about.',
+        confidence, stage: result.stage || 2
+      };
     }
 
     // ── SAFE ────────────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
  * lens-bubble.js — GuardianLens chatbot content script
  * Dark navy base + warm playful accents for kids
  * Modes: safe (teal/mint) · warn (amber) · escalate (coral/red)
+ * v1.0.1 — safeSendMessage guard on all chrome.runtime calls
  */
 
 (function () {
@@ -18,6 +19,17 @@
   let currentContext  = null;
   let warningDismissed = false;
   let currentMode     = 'safe';
+
+  // ─── Safe sendMessage — guards against "Extension context invalidated" ────
+  function safeSendMessage(msg, callback) {
+    try {
+      if (!chrome.runtime?.id) return;
+      chrome.runtime.sendMessage(msg, callback);
+    } catch (e) {
+      if (e.message?.includes('Extension context invalidated')) return;
+      console.warn('[GL] sendMessage failed:', e);
+    }
+  }
 
   if (!document.querySelector('link[href*="Sora"]')) {
     const link = document.createElement('link');
@@ -206,7 +218,7 @@
     </div>
     <div id="gl-input-row">
       <input id="gl-input" type="text" placeholder="Ask GuardianLens anything… 💬" autocomplete="off" />
-      <button id="gl-send">➤</button>
+      <button id="gl-send" id="gl-send-btn">➤</button>
     </div>
   `;
   root.appendChild(panel);
@@ -272,7 +284,7 @@
   function closePanel() {
     panel.classList.remove('open'); chatOpen = false;
     if (currentContext && !warningDismissed && currentMode === 'warn') {
-      chrome.runtime.sendMessage({ type:'LENS_WARNING_DISMISSED', domain:currentContext.domain, category:currentContext.category, risk:currentContext.risk, url:location.href });
+      safeSendMessage({ type:'LENS_WARNING_DISMISSED', domain:currentContext.domain, category:currentContext.category, risk:currentContext.risk, url:location.href });
       warningDismissed = true;
     }
   }
@@ -333,7 +345,7 @@ Style: Be the kid's cool older friend. 2–3 sentences MAX. Never lecture. Ask w
   function callGL(userMsg) {
     if (userMsg) chatHistory.push({ role:'user', content:userMsg });
     showTyping(); setLock(true);
-    chrome.runtime.sendMessage(
+    safeSendMessage(
       { type:'LENS_GROQ_REQUEST', systemPrompt:buildPrompt(currentContext), history:chatHistory },
       (response) => {
         removeTyping(); setLock(false);
@@ -362,7 +374,7 @@ Style: Be the kid's cool older friend. 2–3 sentences MAX. Never lecture. Ask w
   });
 
   document.getElementById('gl-dismiss-btn').addEventListener('click', () => {
-    chrome.runtime.sendMessage({ type:'LENS_WARNING_DISMISSED', domain:currentContext?.domain, category:currentContext?.category, risk:currentContext?.risk, url:location.href });
+    safeSendMessage({ type:'LENS_WARNING_DISMISSED', domain:currentContext?.domain, category:currentContext?.category, risk:currentContext?.risk, url:location.href });
     warningDismissed=true; dismissBar.classList.remove('show'); closePanel(); setMode('safe');
   });
 
@@ -372,7 +384,7 @@ Style: Be the kid's cool older friend. 2–3 sentences MAX. Never lecture. Ask w
 
     if (ctx.risk >= RISK_ESCALATE_THRESHOLD) {
       setMode('escalate'); showContext('escalate',ctx.category,ctx.domain);
-      chrome.runtime.sendMessage({ type:'LENS_ESCALATE', domain:ctx.domain, category:ctx.category, url:location.href });
+      safeSendMessage({ type:'LENS_ESCALATE', domain:ctx.domain, category:ctx.category, url:location.href });
       badge.classList.add('show'); openPanel();
       addMsg('bot',"Hey, I need to pause you here 💛 This page has content that's way too intense. I've let your parents know — you're not in trouble at all, I just care about you!",'escalate-mode');
       setTimeout(()=>addAltsCard(ctx.domain), 700);

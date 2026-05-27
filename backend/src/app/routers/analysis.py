@@ -246,7 +246,30 @@ async def analyze_chat(
     except Exception as e:
         logger.error(f"[Chat Analysis] Failed: {e}", exc_info=True)
         return ChatAnalysisResponse(safe=True, action="none")
-
+@router.post("/chat/debug")
+async def debug_chat(
+    request: ChatAnalysisRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    import os, traceback
+    groq_api_key = os.environ.get('GROQ_API_KEY')
+    result = {
+        "key_present": bool(groq_api_key),
+        "key_prefix": groq_api_key[:8] + "..." if groq_api_key else None,
+        "groq_result": None,
+        "error": None
+    }
+    try:
+        groq_result = await classifier._classify_with_groq(
+            url=request.url or "chat",
+            text_content=request.messages,
+            child_age=request.child_age,
+            is_chat=True
+        )
+        result["groq_result"] = groq_result
+    except Exception as e:
+        result["error"] = traceback.format_exc()
+    return result
 
 @router.get("/health")
 async def analysis_health():
