@@ -2,7 +2,7 @@
 
 Implements a two-layer approach for content analysis:
 - Layer 1 (Fast Path): URL tokenization and keyword matching
-- Layer 2 (Slow Path): Hugging Face Inference API for content analysis
+- Layer 2 (Slow Path): Groq LLM for content analysis
 """
 
 import os
@@ -10,350 +10,294 @@ import json
 import httpx
 import re
 import logging
-from typing import Optional, Tuple
-from urllib.parse import urlparse
-from groq import Groq
-from ..config import settings
+from typing import Optional
+
+# ✅ FIX 1: Use AsyncGroq instead of Groq (sync client blocks async event loop)
+from groq import AsyncGroq
 
 logger = logging.getLogger(__name__)
 
-# High-risk keywords for URL tokenization (fast path)
-# Inspired by "Design of Kids-specific URL Classifier" paper
-HIGH_RISK_KEYWORDS = {
-    # Adult/NSFW content
-    "xxx", "porn", "porno", "pornography", "adult", "nsfw", "sex", "sexy",
-    "nude", "nudes", "naked", "erotic", "erotica", "hentai", "xvideos",
-    "pornhub", "xnxx", "redtube", "youporn", "brazzers", "onlyfans",
-
-    # Gambling - keywords
-    "bet", "betting", "gamble", "gambling", "casino", "poker", "slots",
-    "blackjack", "roulette", "baccarat", "sportsbook", "wager", "bookie",
-
-    # Gambling - known sites/patterns
-    "1xbet", "xbet", "bet365", "betway", "betfair", "pinnacle", "bovada",
-    "draftkings", "fanduel", "pokerstars", "partypoker", "888poker",
-    "unibet", "ladbrokes", "williamhill", "paddy", "paddypower", "betfred",
-    "skybet", "coral", "betvictor", "sportingbet", "bwin", "parimatch",
-
-    # Drugs/Substance abuse
-    "drugs", "marijuana", "cannabis", "cocaine", "heroin", "meth",
-    "weed", "420", "drugstore", "pharma",
-
-    # Violence/Gore
-    "gore", "violence", "brutal", "death", "murder", "torture", "kill",
-    "bloody", "corpse", "beheading",
-
-    # Hate/Extremism
-    "hate", "racist", "nazi", "supremacist", "extremist", "terrorism",
-
-    # Self-harm
-    "suicide", "selfharm", "cutting", "anorexia", "bulimia",
-
-    # Scams/Phishing
-    "phishing", "scam", "fraud",
+# ─────────────────────────────────────────────
+# Slang / grooming keyword fast-path
+# ─────────────────────────────────────────────
+GROOMING_SLANG = {
+    "sneaky link": "secret romantic partner",
+    "irl": "in real life",
+    "dont tell": "don't tell anyone",
+    "don't tell": "don't tell anyone",
+    "meet up": "meet in person",
+    "meetup": "meet in person",
+    "slide into": "contact privately",
+    "slide in": "contact privately",
+    "hmu": "hit me up / contact me",
+    "wb": "write back",
+    "wyd": "what are you doing",
+    "wya": "where are you",
+    "lmk": "let me know",
+    "ngl": "not gonna lie",
+    "fr": "for real",
+    "lowkey": "secretly / somewhat",
+    "no cap": "honestly / truthfully",
+    "ghost": "stop responding suddenly",
+    "ghosted": "stopped responding suddenly",
+    "hit different": "feels special / different",
+    "sus": "suspicious",
+    "keep it on the dl": "keep it secret",
+    "dl": "down-low / secret",
+    "keep it between us": "keep it secret",
+    "just us": "only the two of us",
+    "come thru": "come over",
+    "pull up": "come over",
+    "link up": "meet up",
+    "link": "meet up",
+    "finesse": "manipulate / trick",
+    "cap": "lie",
+    "no 🧢": "no lie / honestly",
+    "fwb": "friends with benefits",
+    "talking to": "romantically interested in",
+    "talking": "romantically involved",
+    "situationship": "undefined romantic relationship",
+    "body count": "number of sexual partners",
+    "smash": "have sex with",
+    "dtf": "down to have sex",
+    "nudes": "nude photographs",
+    "send nudes": "send nude photographs",
+    "pics": "pictures",
+    "thirst trap": "provocative photo for attention",
+    "slide": "send (photos/messages)",
+    "spill": "share secrets",
+    "ratio": "get more responses than original",
+    "caught feelings": "developed romantic feelings",
+    "simping": "obsessing over someone",
+    "rizz": "romantic charisma / charm",
+    "shoot your shot": "make a romantic move",
+    "ghosting": "disappearing without explanation",
+    "breadcrumbing": "giving minimal attention to keep interest",
+    "love bombing": "overwhelming with affection to manipulate",
 }
+
+GROOMING_RISK_PATTERNS = [
+    r'\bsneaky\s*link\b',
+    r'\bmeet\s*(up\s*)?(irl|in\s*real\s*life)\b',
+    r"\bdon'?t\s+tell\s+(your\s+)?(mom|dad|parents?|anyone)\b",
+    r'\bkeep\s+it\s+(between\s+us|secret|on\s+the\s+dl)\b',
+    r'\bjust\s+(between\s+)?(us|you\s+and\s+me)\b',
+    r'\bcome\s+(over|thru|through)\b',
+    r'\bsend\s+(me\s+)?(pics?|photos?|nudes?)\b',
+    r'\byou\s+look\s+(so\s+)?(hot|sexy|cute|beautiful)\b',
+    r'\bhow\s+old\s+are\s+you\b',
+    r'\bare\s+you\s+(home\s+)?alone\b',
+    r'\bwhere\s+do\s+you\s+live\b',
+    r'\bwhat\s+school\b',
+]
+
+HIGH_RISK_SITES = {
+    'omegle.com', 'chatroulette.com', 'chaturbate.com', 'onlyfans.com',
+    'pornhub.com', 'xvideos.com', 'xnxx.com', 'redtube.com',
+    'youporn.com', 'tube8.com', '4chan.org', 'reddit.com/r/gonewild',
+}
+
+MEDIUM_RISK_SITES = {
+    'discord.com', 'roblox.com', 'fortnite.com', 'twitch.tv',
+    'tiktok.com', 'instagram.com', 'snapchat.com',
+}
+
+
+def expand_slang(text: str) -> str:
+    """Expand known slang terms for better LLM analysis."""
+    expanded = text
+    for slang, meaning in GROOMING_SLANG.items():
+        pattern = re.compile(re.escape(slang), re.IGNORECASE)
+        expanded = pattern.sub(f"{slang} ({meaning})", expanded)
+    return expanded
+
+
+def fast_path_check(url: str, text: str) -> Optional[dict]:
+    """Layer 1: fast keyword/pattern check before hitting Groq."""
+    domain = ""
+    try:
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lower().replace("www.", "")
+    except Exception:
+        pass
+
+    # High-risk site
+    if any(h in domain for h in HIGH_RISK_SITES):
+        return {
+            "category": "adult_content",
+            "confidence": 0.95,
+            "action": "block",
+            "safe": False,
+            "reason": f"High-risk site: {domain}",
+            "detected_patterns": [domain],
+            "trigger_words": [domain],
+            "parent_report": f"Attempted to access {domain}",
+            "child_message": None,
+        }
+
+    # Grooming pattern match
+    matched = []
+    for pattern in GROOMING_RISK_PATTERNS:
+        if re.search(pattern, text, re.IGNORECASE):
+            matched.append(pattern)
+
+    if len(matched) >= 2:
+        return {
+            "category": "grooming",
+            "confidence": 0.80,
+            "action": "warn",
+            "safe": False,
+            "reason": "Multiple grooming-related patterns detected",
+            "detected_patterns": matched,
+            "trigger_words": matched,
+            "parent_report": "Possible grooming language detected in chat",
+            "child_message": None,
+        }
+
+    return None  # proceed to slow path
 
 
 class ContentClassifier:
-    """Two-layer content classification system."""
-
-    # Model URLs for zero-shot classification (in order of preference)
-    PRIMARY_MODEL = "https://api-inference.huggingface.co/models/MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli"
-    FALLBACK_MODEL = "https://api-inference.huggingface.co/models/cross-encoder/nli-distilroberta-base"
 
     def __init__(self):
-        self.api_key = getattr(settings, 'HUGGINGFACE_API_KEY', None)
-        self.timeout = 30.0
+        self.groq_api_key = os.environ.get("GROQ_API_KEY")
+        if not self.groq_api_key:
+            logger.warning("[Classifier] No GROQ_API_KEY configured — LLM layer disabled")
 
-    def _tokenize_url(self, url: str) -> set:
-        try:
-            parsed = urlparse(url)
-            url_string = f"{parsed.netloc}{parsed.path}".lower()
-            tokens = re.split(r'[/.\-_?&=]', url_string)
-            expanded_tokens = set()
-            for token in tokens:
-                if not token.strip():
-                    continue
-                expanded_tokens.add(token.strip())
-                parts = re.split(r'(\d+)', token)
-                for part in parts:
-                    if part.strip():
-                        expanded_tokens.add(part.strip())
-                for keyword in HIGH_RISK_KEYWORDS:
-                    if keyword in token and len(keyword) >= 3:
-                        expanded_tokens.add(keyword)
-            return expanded_tokens
-        except Exception as e:
-            logger.warning(f"[Classifier] URL tokenization failed: {e}")
-            return set()
+    async def classify(
+        self,
+        url: str,
+        text_content: str,
+        child_age: int = 13,
+        is_chat: bool = False,
+    ) -> dict:
+        """Full classification pipeline: fast path → Groq slow path."""
 
-    def _check_url_keywords(self, url: str) -> Tuple[bool, Optional[str]]:
-        tokens = self._tokenize_url(url)
-        for token in tokens:
-            if token in HIGH_RISK_KEYWORDS:
-                logger.info(f"[Classifier] Fast path: URL blocked due to keyword '{token}'")
-                return True, token
-        return False, None
+        # Layer 1
+        fast = fast_path_check(url, text_content)
+        if fast:
+            logger.info(f"[Classifier] Fast-path hit: {fast['category']}")
+            return fast
 
-    async def _call_hf_model(self, model_url: str, text: str, headers: dict) -> Tuple[Optional[dict], int]:
-        candidate_labels = ["safe", "unsafe", "adult", "toxic", "gambling", "violence"]
-        payload = {
-            "inputs": text,
-            "parameters": {"candidate_labels": candidate_labels}
-        }
-        model_name = model_url.split("/")[-1]
-        logger.info(f"[Classifier] Calling model: {model_name}")
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(model_url, json=payload, headers=headers)
-            logger.info(f"[Classifier] Model {model_name} responded with status: {response.status_code}")
-            if response.status_code == 200:
-                return response.json(), 200
-            else:
-                logger.warning(f"[Classifier] Model {model_name} error: {response.status_code} - {response.text[:200]}")
-                return None, response.status_code
+        # Layer 2
+        if not self.groq_api_key:
+            return self._safe_result()
 
-    async def _analyze_content_with_api(self, text: str) -> Tuple[bool, float, str]:
-        if not self.api_key:
-            logger.warning("[Classifier] No Hugging Face API key configured, skipping content analysis")
-            return False, 0.0, ""
+        return await self._classify_with_groq(url, text_content, child_age, is_chat)
 
-        truncated_text = text[:1000] if len(text) > 1000 else text
-        if not truncated_text.strip():
-            return False, 0.0, ""
+    async def _classify_with_groq(
+        self,
+        url: str,
+        text_content: str,
+        child_age: int = 13,
+        is_chat: bool = False,
+    ) -> dict:
+        """Layer 2: Groq LLM classification."""
 
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
+        expanded_text = expand_slang(text_content)
 
-        models_to_try = [
-            (self.PRIMARY_MODEL, "DeBERTa-v3-base-mnli"),
-            (self.FALLBACK_MODEL, "nli-distilroberta-base")
-        ]
+        context_type = "chat messages" if is_chat else "web page content"
 
-        result = None
-        used_model = None
+        system_prompt = f"""You are a child safety AI assistant analyzing {context_type}.
+The user is a child aged {child_age}.
 
-        for model_url, model_name in models_to_try:
-            try:
-                logger.info(f"[Classifier] Attempting classification with {model_name}...")
-                api_result, status_code = await self._call_hf_model(model_url, truncated_text, headers)
-                if status_code == 200 and api_result:
-                    result = api_result
-                    used_model = model_name
-                    logger.info(f"[Classifier] ✅ Successfully used model: {model_name}")
-                    break
-                elif status_code in (410, 503):
-                    logger.warning(f"[Classifier] Model {model_name} unavailable (status {status_code}), trying fallback...")
-                    continue
-                else:
-                    logger.warning(f"[Classifier] Model {model_name} failed (status {status_code}), trying fallback...")
-                    continue
-            except httpx.TimeoutException:
-                logger.warning(f"[Classifier] Model {model_name} timed out, trying fallback...")
-                continue
-            except Exception as e:
-                logger.error(f"[Classifier] Model {model_name} error: {e}, trying fallback...")
-                continue
+Your job is to detect:
+- grooming: adults trying to build inappropriate relationships, secrecy requests, meet-up requests, sexual language
+- adult_content: pornographic or sexually explicit material
+- violence: graphic violence or self-harm content
+- bullying: cyberbullying or harassment
+- drugs: drug use or sales
 
-        if not result:
-            logger.warning("[Classifier] All models failed, allowing content (fail-open)")
-            return False, 0.0, ""
+Respond ONLY with a valid JSON object — no markdown, no explanation, no preamble.
 
-        try:
-            if "labels" in result and "scores" in result:
-                labels = result["labels"]
-                scores = result["scores"]
-                logger.info(f"[Classifier] Classification results from {used_model}:")
-                for label, score in zip(labels[:5], scores[:5]):
-                    logger.info(f"[Classifier]   - {label}: {score:.2%}")
-                threshold = 0.6
-                unsafe_labels = {"unsafe", "adult", "toxic", "gambling", "violence"}
-                for label, score in zip(labels, scores):
-                    if label.lower() in unsafe_labels and score >= threshold:
-                        logger.info(f"[Classifier] ⚠️ Content flagged as '{label}' with confidence {score:.2%}")
-                        return True, score, label
-                for label, score in zip(labels, scores):
-                    if label.lower() == "safe" and score < 0.3:
-                        logger.info(f"[Classifier] ⚠️ Low 'safe' score ({score:.2%}) - content may be unsafe")
-                        for l, s in zip(labels, scores):
-                            if l.lower() != "safe" and s > 0.4:
-                                return True, s, l
-            return False, 0.0, ""
-        except Exception as e:
-            logger.error(f"[Classifier] Failed to parse API response: {e}")
-            return False, 0.0, ""
-
-    # ── FIX: correct indentation (was broken before) + added is_chat param ──
-    async def _classify_with_groq(self, url: str, text_content: str, child_age: int = 13, is_chat: bool = False) -> dict:
-        try:
-            groq_api_key = os.environ.get('GROQ_API_KEY')
-            if not groq_api_key:
-                logger.warning("[Classifier] No Groq API key configured, skipping Groq analysis")
-                return {}
-
-            client = Groq(api_key=groq_api_key)
-
-            if is_chat:
-                system_prompt = """You are a child safety AI protecting children from online grooming and exploitation.
-
-Your job is to analyze chat messages for grooming tactics, predatory behavior, and harmful intent — including when expressed in teen slang or casual language.
-
-Grooming patterns to detect:
-- Requesting images or videos ("send pics", "send me a fit check", "show me", "drop ur snap")
-- Isolation tactics ("don't tell your mom", "keep it between us", "our secret", "don't snitch")
-- Inappropriate intimacy ("you're so mature", "you're different from other kids", "I get you")
-- Soliciting meetings ("wanna link", "meet up irl", "come through", "pull up")
-- Coercion or bribery ("I'll pay you", "I'll give you", "if you do this for me")
-- Age-inappropriate sexual content or innuendo
-- Excessive flattery combined with secrecy
-- Requests for personal information (address, school, location)
-
-Slang awareness:
-- "fit" or "fit check" = appearance/outfit (context matters)
-- "link up" / "pull up" / "come through" = meet in person
-- "snap" / "gram" / "tt" = social media handles
-- "lowkey" / "no cap" = honestly/seriously
-- "send it" / "drop it" = send content
-- "fr fr" = for real (emphasis)
-- "sus" = suspicious
-- "ghost" = stop talking to someone
-- "slide into DMs" = private message someone
-
-Return a JSON object only:
-{
-  "category": "safe" | "grooming" | "explicit" | "coercion" | "isolation" | "solicitation",
-  "risk_score": 0.0 to 1.0,
+Required JSON keys:
+{{
+  "category": "grooming" | "adult_content" | "violence" | "bullying" | "drugs" | "safe",
+  "risk_score": 0-10,
   "action": "none" | "warn" | "block",
   "reason": "one sentence explanation",
-  "detected_patterns": ["list", "of", "patterns", "found"]
-}
+  "detected_patterns": ["list", "of", "specific", "phrases"],
+  "trigger_words": ["exact", "words", "that", "triggered"],
+  "parent_report": "summary for parent notification",
+  "child_message": "optional supportive message to show the child, or null"
+}}
 
 Rules:
-- Single innocent messages = lower risk
-- Combinations of patterns = higher risk
-- Context matters: "send pics of your dog" is NOT the same as "send pics"
-- When in doubt about child safety, lean toward warn rather than none"""
+- risk_score 0-3 → action: none
+- risk_score 4-6 → action: warn  
+- risk_score 7-10 → action: block
+- Be especially sensitive to: secret-keeping, meet-up requests, age/location questions, sexual language
+- child_age {child_age}: apply age-appropriate sensitivity
+"""
 
-                user_prompt = f"""Analyze these chat messages for grooming or harmful intent.
-Child age: {child_age}
-URL/Platform: {url}
+        user_prompt = f"""Analyze this {context_type} from {url}:
 
-Messages:
-{text_content[:1500]}
-
-Return JSON only."""
-
-            else:
-                system_prompt = """You are a child safety content classifier.
-
-Classify webpages for a child's age group. Consider both the URL and page content.
-
-Return a JSON object only:
-{
-  "category": "safe" | "social media" | "gaming" | "streaming" | "adult content" | "violence" | "gambling" | "drugs" | "hate speech" | "self harm" | "chat" | "forums",
-  "risk_score": 0.0 to 1.0,
-  "action": "none" | "warn" | "block",
-  "reason": "one sentence explanation"
-}
-
-Guidelines:
-- Adult content, gambling, drugs, violence → block
-- Social media, forums, chat platforms → warn (age dependent)
-- Educational, news, entertainment → safe
-- risk_score above 0.7 → block, 0.4-0.7 → warn, below 0.4 → none"""
-
-                user_prompt = f"""Classify this webpage for a child aged {child_age}.
-URL: {url}
-Page text preview: {text_content[:800]}
+{expanded_text[:3000]}
 
 Return JSON only."""
 
-            response = client.chat.completions.create(
-                model='llama-3.3-70b-versatile',
+        try:
+            # ✅ FIX 1: AsyncGroq client with await
+            client = AsyncGroq(api_key=self.groq_api_key)
+            response = await client.chat.completions.create(
+                model="llama-3.3-70b-versatile",
                 messages=[
-                    {'role': 'system', 'content': system_prompt},
-                    {'role': 'user', 'content': user_prompt}
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
                 ],
-                temperature=0.1
+                temperature=0.1,
+                max_tokens=512,
             )
 
             raw = response.choices[0].message.content.strip()
+            logger.debug(f"[Classifier] Groq raw: {raw[:200]}")
 
-            if raw.startswith('```'):
-                raw = re.sub(r'^```(?:json)?\s*', '', raw)
-                raw = re.sub(r'\s*```$', '', raw)
-                raw = raw.strip()
+            # Strip markdown fences if present
+            cleaned = re.sub(r"^```(?:json)?\s*", "", raw)
+            cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
-            if not raw:
-                logger.warning('[Classifier] Groq returned empty response')
-                return {}
+            groq_result = json.loads(cleaned)
 
-            groq_result = json.loads(raw)
-            result = {
-                'category': groq_result.get('category', ''),
-                'confidence': groq_result.get('risk_score', 0),
-                'action': groq_result.get('action', 'none'),
-                'safe': groq_result.get('action', 'none') == 'none',
-                'reason': groq_result.get('reason', ''),
-                'detected_patterns': groq_result.get('detected_patterns', [])
+            # ✅ FIX 2: Normalize risk_score from 0-10 to 0.0-1.0
+            raw_score = groq_result.get("risk_score", 0)
+            confidence = raw_score / 10.0 if raw_score > 1.0 else float(raw_score)
+
+            action = groq_result.get("action", "none")
+            category = groq_result.get("category", "safe")
+
+            return {
+                "category": category,
+                "confidence": round(confidence, 3),
+                "action": action,
+                "safe": action == "none",
+                "reason": groq_result.get("reason", ""),
+                # ✅ FIX 3: Expose all fields background.js needs
+                "detected_patterns": groq_result.get("detected_patterns", []),
+                "trigger_words": groq_result.get("trigger_words", []),
+                "parent_report": groq_result.get("parent_report", ""),
+                "child_message": groq_result.get("child_message", None),
             }
-            logger.info(f"[Classifier] Groq classification: {result}")
-            return result
 
+        except json.JSONDecodeError as e:
+            logger.error(f"[Classifier] JSON parse failed: {e} | raw: {raw[:300]}")
+            return self._safe_result()
         except Exception as e:
-            logger.error(f"[Classifier] Groq classification failed: {e}")
-            return {}
+            logger.error(f"[Classifier] Groq call failed: {e}")
+            return self._safe_result()
 
-    # ── FIX: added is_chat param, passed through to _classify_with_groq ──
-    async def predict(self, url: str, text_content: str = "", is_chat: bool = False) -> dict:
-        result = {
-            "safe": True,
-            "blocked_by": None,
-            "matched_keyword": None,
-            "category": None,
+    def _safe_result(self) -> dict:
+        return {
+            "category": "safe",
             "confidence": 0.0,
-            "action": "none"
+            "action": "none",
+            "safe": True,
+            "reason": "",
+            "detected_patterns": [],
+            "trigger_words": [],
+            "parent_report": "",
+            "child_message": None,
         }
 
-        # Layer 1: Fast path - URL keyword check (skip for chat)
-        if not is_chat:
-            is_url_unsafe, matched_keyword = self._check_url_keywords(url)
-            if is_url_unsafe:
-                result["safe"] = False
-                result["blocked_by"] = "url_keywords"
-                result["matched_keyword"] = matched_keyword
-                result["category"] = "blocked_keyword"
-                result["confidence"] = 0.3
-                result["action"] = "block"
-                return result
 
-        # Layer 2: Groq classification (only if text provided)
-        if text_content and text_content.strip():
-            groq_result = await self._classify_with_groq(url, text_content, is_chat=is_chat)
-            if groq_result:
-                is_safe = groq_result.get('action', 'none') == 'none'
-                result['safe'] = is_safe
-                result['blocked_by'] = 'groq_classification'
-                result['category'] = groq_result.get('category', '')
-                result['confidence'] = groq_result.get('confidence', 0)
-                result['action'] = groq_result.get('action', 'none')
-                result['detected_patterns'] = groq_result.get('detected_patterns', [])
-                return result
-
-        # Layer 3: Slow path - HuggingFace fallback (only for page content, not chat)
-        if not is_chat and text_content and text_content.strip():
-            is_content_unsafe, confidence, category = await self._analyze_content_with_api(text_content)
-            if is_content_unsafe:
-                result["safe"] = False
-                result["blocked_by"] = "content_analysis"
-                result["category"] = category
-                result["confidence"] = confidence
-                result["action"] = "block"
-                return result
-
-        return result
-
-
-# Singleton instance
+# Singleton
 classifier = ContentClassifier()
