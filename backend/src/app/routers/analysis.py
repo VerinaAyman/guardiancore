@@ -252,23 +252,42 @@ async def debug_chat(
     current_user: dict = Depends(get_current_user)
 ):
     import os, traceback
+    from groq import Groq
+    import re, json
+
     groq_api_key = os.environ.get('GROQ_API_KEY')
     result = {
         "key_present": bool(groq_api_key),
         "key_prefix": groq_api_key[:8] + "..." if groq_api_key else None,
-        "groq_result": None,
-        "error": None
+        "raw_response": None,
+        "after_strip": None,
+        "parse_error": None,
+        "parsed": None
     }
+
     try:
-        groq_result = await classifier._classify_with_groq(
-            url=request.url or "chat",
-            text_content=request.messages,
-            child_age=request.child_age,
-            is_chat=True
+        client = Groq(api_key=groq_api_key)
+        response = client.chat.completions.create(
+            model='llama-3.3-70b-versatile',
+            messages=[
+                {'role': 'system', 'content': 'You are a child safety AI. Return JSON only with keys: category, risk_score, action, reason, detected_patterns.'},
+                {'role': 'user', 'content': f'Analyze this chat for grooming: {request.messages}\nReturn JSON only.'}
+            ],
+            temperature=0.1
         )
-        result["groq_result"] = groq_result
+        raw = response.choices[0].message.content.strip()
+        result["raw_response"] = raw
+
+        cleaned = re.sub(r'^```(?:json)?\s*', '', raw)
+        cleaned = re.sub(r'\s*```$', '', cleaned).strip()
+        result["after_strip"] = cleaned
+
+        parsed = json.loads(cleaned)
+        result["parsed"] = parsed
+
     except Exception as e:
-        result["error"] = traceback.format_exc()
+        result["parse_error"] = traceback.format_exc()
+
     return result
 
 @router.get("/health")
