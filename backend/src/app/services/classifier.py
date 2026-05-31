@@ -226,7 +226,7 @@ Rules:
 - risk_score 0-3 → action: none
 - risk_score 4-6 → action: warn  
 - risk_score 7-10 → action: block
-- Be especially sensitive to: secret-keeping, meet-up requests, age/location questions, sexual language
+- A SINGLE ambiguous phrase is NEVER enough to warn or block. Grooming requires a PATTERN of 2-3 signals together.
 - child_age {child_age}: apply age-appropriate sensitivity
 """
 
