@@ -236,7 +236,7 @@ async def analyze_chat(
 
         action = groq_result.get('action', 'none')
         confidence = groq_result.get('confidence', 0.0)
-        if action in ('block', 'warn') and confidence < 0.75:
+        if action in ('block', 'warn') and confidence < 0.85:
             action = 'none'
         return ChatAnalysisResponse(
             safe=(action == 'none'),
