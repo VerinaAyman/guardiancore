@@ -4,54 +4,46 @@ Implements a two-layer approach for content analysis:
 - Layer 1 (Fast Path): URL tokenization and keyword matching
 - Layer 2 (Slow Path): Groq LLM for content analysis
 """
-
 import os
 import json
 import re
 import logging
 from typing import Optional
-
+from urllib.parse import urlparse
 from groq import AsyncGroq
 
 logger = logging.getLogger(__name__)
 
 GROOMING_SLANG = {
-    "sneaky link": "secret romantic partner",
-    "dont tell": "don't tell anyone",
-    "don't tell": "don't tell anyone",
-    "keep it on the dl": "keep it secret",
-    "keep it between us": "keep it secret",
-    "fwb": "friends with benefits",
-    "body count": "number of sexual partners",
-    "smash": "have sex with",
-    "dtf": "down to have sex",
-    "nudes": "nude photographs",
-    "send nudes": "send nude photographs",
-    "thirst trap": "provocative photo for attention",
-    "love bombing": "overwhelming with affection to manipulate",
-    "finesse": "manipulate / trick",
-    "situationship": "undefined romantic relationship",
+    "wyd": "what are you doing",
+    "wya": "where are you",
+    "hmu": "hit me up",
+    "dtb": "don't tell",
+    "ngl": "not gonna lie",
+    "frfr": "for real for real",
+    "irl": "in real life",
+    "nsfw": "not safe for work",
+    "smh": "shaking my head",
+    "tbh": "to be honest",
 }
 
 GROOMING_RISK_PATTERNS = [
-    r'\bsneaky\s*link\b',
-    r"\bdon'?t\s+tell\s+(your\s+)?(mom|dad|parents?|anyone)\b",
-    r'\bkeep\s+it\s+(between\s+us|secret|on\s+the\s+dl)\b',
-    r'\bjust\s+(between\s+)?(us|you\s+and\s+me)\b',
-    r'\bsend\s+(me\s+)?(pics?|photos?|nudes?)\b',
-    r'\bare\s+you\s+(home\s+)?alone\b',
-    r'\bwhat\s+school\b',
+    r"\b(secret|secrets|keep this between us|don't tell|dont tell)\b",
+    r"\b(send me (pics|photos|images|nudes|selfies))\b",
+    r"\b(private (photos|pics|pictures))\b",
+    r"\b(meet (me|up|in person|irl))\b",
+    r"\b(where do you live|what's your address|your location)\b",
+    r"\b(how old are you|your age|are you alone)\b",
+    r"\b(don't tell your (parents|mom|dad|guardian))\b",
+    r"\b(keep it (secret|between us|private))\b",
 ]
 
 HIGH_RISK_SITES = {
-    'omegle.com', 'chatroulette.com', 'chaturbate.com', 'onlyfans.com',
-    'pornhub.com', 'xvideos.com', 'xnxx.com', 'redtube.com',
-    'youporn.com', 'tube8.com', '4chan.org', 'reddit.com/r/gonewild',
+    "omegle.com", "chatroulette.com", "omegle.tv",
 }
 
 MEDIUM_RISK_SITES = {
-    'discord.com', 'roblox.com', 'fortnite.com', 'twitch.tv',
-    'tiktok.com', 'instagram.com', 'snapchat.com',
+    "discord.com", "telegram.org", "kik.com",
 }
 
 
@@ -63,50 +55,26 @@ def expand_slang(text: str) -> str:
     return expanded
 
 
-def fast_path_check(url: str, text: str) -> Optional[dict]:
+def fast_path_check(url: str, text_content: str) -> dict:
     domain = ""
-    try:
-        from urllib.parse import urlparse
+    if url:
         domain = urlparse(url).netloc.lower().replace("www.", "")
-    except Exception:
-        pass
-
-    if any(h in domain for h in HIGH_RISK_SITES):
-        return {
-            "category": "adult_content",
-            "confidence": 0.95,
-            "action": "block",
-            "safe": False,
-            "reason": f"High-risk site: {domain}",
-            "detected_patterns": [domain],
-            "trigger_words": [domain],
-            "parent_report": f"Attempted to access {domain}",
-            "child_message": None,
-        }
 
     matched = []
     for pattern in GROOMING_RISK_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
+        if re.search(pattern, text_content, re.IGNORECASE):
             matched.append(pattern)
 
-    if len(matched) >= 2:
-        return {
-            "category": "grooming",
-            "confidence": 0.80,
-            "action": "warn",
-            "safe": False,
-            "reason": "Multiple grooming-related patterns detected",
-            "detected_patterns": matched,
-            "trigger_words": matched,
-            "parent_report": "Possible grooming language detected in chat",
-            "child_message": None,
-        }
+    if domain in HIGH_RISK_SITES:
+        return {"flagged": True, "reason": "high_risk_site", "patterns": matched}
 
-    return None
+    if len(matched) >= 2:
+        return {"flagged": True, "reason": "pattern_match", "patterns": matched}
+
+    return {"flagged": False, "reason": None, "patterns": matched}
 
 
 class ContentClassifier:
-
     def __init__(self):
         self.groq_api_key = os.environ.get("GROQ_API_KEY")
         if not self.groq_api_key:
@@ -119,15 +87,24 @@ class ContentClassifier:
         child_age: int = 13,
         is_chat: bool = False,
     ) -> dict:
-        fast = fast_path_check(url, text_content)
-        if fast:
-            logger.info(f"[Classifier] Fast-path hit: {fast['category']}")
-            return fast
-
         if not self.groq_api_key:
             return self._safe_result()
 
-        return await self._classify_with_groq(url, text_content, child_age, is_chat)
+        fast = fast_path_check(url, text_content)
+
+        try:
+            return await self._classify_with_groq(url, text_content, child_age, is_chat)
+        except Exception as e:
+            logger.error(f"[Classifier] Groq call failed: {e}")
+            return self._safe_result()
+
+    async def classify_chat(
+        self,
+        url: str,
+        messages: str,
+        child_age: int = 13,
+    ) -> dict:
+        return await self.classify(url, messages, child_age, is_chat=True)
 
     async def _classify_with_groq(
         self,
@@ -136,108 +113,98 @@ class ContentClassifier:
         child_age: int = 13,
         is_chat: bool = False,
     ) -> dict:
+        if not self.groq_api_key:
+            return self._safe_result()
+
         expanded_text = expand_slang(text_content)
         context_type = "chat messages" if is_chat else "web page content"
 
         system_prompt = f"""You are a child safety AI assistant analyzing {context_type}.
-The user is a child aged {child_age}.
+Your job is to detect grooming, harassment, explicit content, or other dangers targeting children.
 
-Your job is to detect:
-- grooming: adults trying to build inappropriate relationships, secrecy requests, sexual language
-- adult_content: pornographic or sexually explicit material
-- violence: graphic violence or self-harm content
-- bullying: cyberbullying or harassment
-- drugs: drug use or sales
+The child being protected is {child_age} years old.
 
-Respond ONLY with a valid JSON object — no markdown, no explanation, no preamble.
-
-Required JSON keys:
+Respond ONLY with a valid JSON object in this exact format:
 {{
-  "category": "grooming" | "adult_content" | "violence" | "bullying" | "drugs" | "safe",
-  "risk_score": 0-10,
+  "category": "safe" | "grooming" | "explicit" | "harassment" | "violence",
+  "risk_score": <integer 0-10>,
   "action": "none" | "warn" | "block",
-  "reason": "one sentence explanation",
-  "detected_patterns": ["list", "of", "specific", "phrases"],
-  "trigger_words": ["exact", "words", "that", "triggered"],
-  "parent_report": "summary for parent notification",
-  "child_message": "optional supportive message to show the child, or null"
+  "reason": "<brief explanation>",
+  "detected_patterns": ["<pattern1>", "<pattern2>"],
+  "trigger_words": ["<word1>"],
+  "parent_report": "<what to tell the parent>",
+  "child_message": "<gentle message to show the child, or null>"
 }}
 
 Rules:
-- risk_score 0-3 → action: none
-- risk_score 4-6 → action: warn
-- risk_score 7-10 → action: block
-- child_age {child_age}: apply age-appropriate sensitivity
-- A SINGLE ambiguous phrase (e.g. "meet up", "come over", "where do you live", "let's hang") is NEVER enough to warn or block on its own. Grooming requires a PATTERN of at least 2-3 concerning signals together in the same conversation.
-- Concerning signal combinations that justify warn/block: (secrecy + meet-up), (age/location questions + sexual language), (isolation + flattery + gift offers), (explicit sexual language + minor), (secrecy request + request for photos or personal content).
-- Casual everyday phrases with no other red flags → action: none, risk_score: 1-2. Examples: "let's meet up", "come over", "wyd", "where do you live", "how old are you", "are you home".
-- Only flag grooming if the conversation shows a clear PATTERN of intent to isolate, sexualize, or physically meet a child deceptively.
-- When in doubt, return action: none. False positives harm children more than false negatives for mild cases.
-"""
+- risk_score 0-3 = safe content, action: none
+- risk_score 4-6 = concerning content, action: warn
+- risk_score 7-10 = dangerous content, action: block
+- Grooming indicators: requests for secrecy, asking for photos/personal content, isolating from parents, age/location probing, meeting in person
+- A single clear grooming signal (secrecy requests, asking for photos, isolating from parents) IS enough to warn.
+- (secrecy request + request for photos or personal content) = always block, risk_score 9+
+- Explicit sexual language = always block
+- Casual everyday phrases with no red flags → action: none, risk_score 1-2
+- A SINGLE ambiguous phrase is NOT enough to block on its own without other signals
+- When in doubt between warn and none, return warn — missing a grooming signal is worse than a false positive
+- Return ONLY the JSON object, no extra text, no markdown fences"""
 
         user_prompt = f"""Analyze this {context_type} from {url}:
 
-{expanded_text[:3000]}
+{expanded_text}
 
-Return JSON only."""
+Child age: {child_age}"""
 
-        try:
-            client = AsyncGroq(api_key=self.groq_api_key)
-            response = await client.chat.completions.create(
-                model="llama-3.3-70b-versatile",
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                temperature=0.1,
-                max_tokens=512,
-            )
-            raw = response.choices[0].message.content.strip()
-            logger.debug(f"[Classifier] Groq raw: {raw[:200]}")
+        client = AsyncGroq(api_key=self.groq_api_key)
+        response = await client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.1,
+            max_tokens=512,
+        )
+        raw = response.choices[0].message.content.strip()
 
-            cleaned = re.sub(r"^```(?:json)?\s*", "", raw)
-            cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+        cleaned = re.sub(r"^```(?:json)?\s*", "", raw)
+        cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
-            groq_result = json.loads(cleaned)
+        groq_result = json.loads(cleaned)
 
-            raw_score = groq_result.get("risk_score", 0)
-            confidence = raw_score / 10.0 if raw_score > 1.0 else float(raw_score)
+        raw_score = groq_result.get("risk_score", 0)
+        confidence = raw_score / 10.0 if raw_score > 1.0 else float(raw_score)
 
-            
-            action_raw = groq_result.get("action", "none").lower()
-            if "block" in action_raw:
-               action = "block"
-            elif "warn" in action_raw:
-               action = "warn"
-            else:
-               action = "none"
-            category = groq_result.get("category", "safe").lower()
+        # Normalize action — model may return "Block and Report", "Warn", etc.
+        action_raw = groq_result.get("action", "none").lower()
+        if "block" in action_raw:
+            action = "block"
+        elif "warn" in action_raw:
+            action = "warn"
+        else:
+            action = "none"
 
-            return {
-                "category": category,
-                "confidence": round(confidence, 3),
-                "action": action,
-                "safe": action == "none",
-                "reason": groq_result.get("reason", ""),
-                "detected_patterns": groq_result.get("detected_patterns", []),
-                "trigger_words": groq_result.get("trigger_words", []),
-                "parent_report": groq_result.get("parent_report", ""),
-                "child_message": groq_result.get("child_message", None),
-            }
+        # Normalize category — model may return "Grooming" with capital G
+        category = groq_result.get("category", "safe").lower()
 
-        except json.JSONDecodeError as e:
-            logger.error(f"[Classifier] JSON parse failed: {e} | raw: {raw[:300]}")
-            return self._safe_result()
-        except Exception as e:
-            logger.error(f"[Classifier] Groq call failed: {e}")
-            return self._safe_result()
+        return {
+            "safe": action == "none",
+            "action": action,
+            "category": category,
+            "confidence": confidence,
+            "reason": groq_result.get("reason", ""),
+            "detected_patterns": groq_result.get("detected_patterns", []),
+            "trigger_words": groq_result.get("trigger_words", []),
+            "parent_report": groq_result.get("parent_report", ""),
+            "child_message": groq_result.get("child_message", None),
+        }
 
     def _safe_result(self) -> dict:
         return {
+            "safe": True,
+            "action": "none",
             "category": "safe",
             "confidence": 0.0,
-            "action": "none",
-            "safe": True,
             "reason": "",
             "detected_patterns": [],
             "trigger_words": [],
