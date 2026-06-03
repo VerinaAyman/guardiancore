@@ -203,8 +203,15 @@ Return JSON only."""
             raw_score = groq_result.get("risk_score", 0)
             confidence = raw_score / 10.0 if raw_score > 1.0 else float(raw_score)
 
-            action = groq_result.get("action", "none")
-            category = groq_result.get("category", "safe")
+            
+            action_raw = groq_result.get("action", "none").lower()
+            if "block" in action_raw:
+               action = "block"
+            elif "warn" in action_raw:
+               action = "warn"
+            else:
+               action = "none"
+            category = groq_result.get("category", "safe").lower()
 
             return {
                 "category": category,
