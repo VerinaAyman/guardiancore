@@ -169,7 +169,7 @@ Rules:
 - risk_score 7-10 → action: block
 - child_age {child_age}: apply age-appropriate sensitivity
 - A SINGLE ambiguous phrase (e.g. "meet up", "come over", "where do you live", "let's hang") is NEVER enough to warn or block on its own. Grooming requires a PATTERN of at least 2-3 concerning signals together in the same conversation.
-- Concerning signal combinations that justify warn/block: (secrecy + meet-up), (age/location questions + sexual language), (isolation + flattery + gift offers), (explicit sexual language + minor).
+- Concerning signal combinations that justify warn/block: (secrecy + meet-up), (age/location questions + sexual language), (isolation + flattery + gift offers), (explicit sexual language + minor), (secrecy request + request for photos or personal content).
 - Casual everyday phrases with no other red flags → action: none, risk_score: 1-2. Examples: "let's meet up", "come over", "wyd", "where do you live", "how old are you", "are you home".
 - Only flag grooming if the conversation shows a clear PATTERN of intent to isolate, sexualize, or physically meet a child deceptively.
 - When in doubt, return action: none. False positives harm children more than false negatives for mild cases.
