@@ -1,10 +1,9 @@
-// GuardianLens Content Script — v0.9.3
+// GuardianLens Content Script — v0.9.4
 // ✅ Inbound-only filtering · multi-platform · slang detection · instant response
-// 🔧 v0.9.3 fixes:
-//    - Inbound-only message filtering (WhatsApp, Discord, Telegram, Instagram)
-//    - Smarter debounce: immediate on first message, debounced on rapid bursts
-//    - Added Instagram DMs + Facebook /messages support
-//    - Fixed getPlatform() / isChatPlatform() for all supported sites
+// 🔧 v0.9.4 fixes:
+//    - Faster debounce: 800ms (was 2500ms) for near-instant detection
+//    - Quiet period lowered to 3s (was 6s)
+//    - Initial scan at 800ms (was 2000ms)
 
 (function () {
   'use strict';
@@ -12,7 +11,6 @@
   if (window.__guardianlens_content_script_loaded) return;
   window.__guardianlens_content_script_loaded = true;
 
-  // ─── Safe sendMessage — guards against "Extension context invalidated" ────
   function safeSendMessage(msg, callback) {
     try {
       if (!chrome.runtime?.id) return;
@@ -22,8 +20,6 @@
       console.warn('[GL] sendMessage failed:', e);
     }
   }
-
-  // ─── Platform detection ───────────────────────────────────────────────────
 
   function isChatPlatform() {
     const host = location.hostname;
@@ -53,91 +49,40 @@
     return 'web';
   }
 
-  // ─── Slang / grooming keyword detection ──────────────────────────────────
-
   const SLANG_MAP = {
-    'wya': 'where you at',
-    'wyd': 'what you doing',
-    'hmu': 'hit me up',
-    'hmu later': 'hit me up later',
-    'irl': 'in real life',
-    'frfr': 'for real for real',
-    'finna': 'going to',
-    'lowkey': 'secretly',
-    'sus': 'suspicious',
-    'slide': 'come over',
-    'slide thru': 'come over',
-    'pull up': 'come to my location',
-    'link up': 'meet in person',
-    'link': 'meet in person',
-    'dms': 'direct messages',
-    'dm me': 'message me privately',
-    'lmk': 'let me know',
-    'ngl': 'not gonna lie',
-    'tbh': 'to be honest',
-    'oml': 'oh my lord',
-    'istg': 'i swear to god',
-    'ong': 'on god (seriously)',
-    'periodt': 'period (emphasis)',
-    'no cap': 'not lying',
-    'cap': 'lie',
-    'bussin': 'really good',
-    'sheesh': 'expression of surprise',
-    'bet': 'okay / agreed',
-    'slay': 'doing great',
-    'rent free': 'always thinking about',
-    'understood the assignment': 'did well',
-    'it\'s giving': 'it seems like',
-    'main character': 'center of attention',
-    'vibe check': 'assess the mood',
-    'hits different': 'feels special',
-    'ate': 'did a great job',
-    'left no crumbs': 'did a great job',
-    'rizz': 'charisma / charm',
-    'npc': 'someone acting mindlessly',
-    'delulu': 'delusional',
-    'cheugy': 'outdated / uncool',
-    'mid': 'mediocre',
-    'ratio': 'getting more dislikes than likes',
-    'caught in 4k': 'caught doing something bad',
-    'ghosting': 'ignoring someone',
-    'situationship': 'undefined romantic relationship',
-    'body count': 'number of sexual partners',
-    'sneaky link': 'secret romantic partner',
-    'soft launch': 'subtly revealing a relationship',
-    'hard launch': 'publicly announcing a relationship',
-    'pick me': 'seeking validation',
-    'simp': 'overly devoted person',
-    'stan': 'obsessive fan',
-    'ship': 'support a romantic pairing',
-    'otp': 'one true pairing',
-    'finesse': 'manipulate skillfully',
-    'flex': 'show off',
-    'drip': 'stylish outfit',
-    'snatched': 'looking attractive',
-    'fire': 'excellent',
-    'lit': 'exciting',
-    'goat': 'greatest of all time',
-    'g': 'friend / gangster',
-    'fam': 'family / close friend',
-    'bro': 'friend',
-    'bruh': 'expression of disbelief',
-    'fr': 'for real',
-    'lowkey sus': 'secretly suspicious',
-    'w': 'win',
-    'l': 'loss',
-    'ratio\'d': 'overwhelmed by negative replies',
-    'touch grass': 'go outside',
-    'based': 'admirable / confident',
-    'cringe': 'embarrassing',
-    'himbo': 'attractive but not intelligent',
-    'fomo': 'fear of missing out',
-    'jomo': 'joy of missing out',
-    'irl meet': 'meet in person',
-    'secret': 'keep this between us',
-    'dont tell': 'don\'t tell anyone',
-    'our secret': 'keep this between us',
-    'special friend': 'close secret friend',
+    'wya': 'where you at', 'wyd': 'what you doing', 'hmu': 'hit me up',
+    'hmu later': 'hit me up later', 'irl': 'in real life', 'frfr': 'for real for real',
+    'finna': 'going to', 'lowkey': 'secretly', 'sus': 'suspicious',
+    'slide': 'come over', 'slide thru': 'come over', 'pull up': 'come to my location',
+    'link up': 'meet in person', 'link': 'meet in person', 'dms': 'direct messages',
+    'dm me': 'message me privately', 'lmk': 'let me know', 'ngl': 'not gonna lie',
+    'tbh': 'to be honest', 'oml': 'oh my lord', 'istg': 'i swear to god',
+    'ong': 'on god (seriously)', 'periodt': 'period (emphasis)', 'no cap': 'not lying',
+    'cap': 'lie', 'bussin': 'really good', 'sheesh': 'expression of surprise',
+    'bet': 'okay / agreed', 'slay': 'doing great', 'rent free': 'always thinking about',
+    'understood the assignment': 'did well', 'it\'s giving': 'it seems like',
+    'main character': 'center of attention', 'vibe check': 'assess the mood',
+    'hits different': 'feels special', 'ate': 'did a great job',
+    'left no crumbs': 'did a great job', 'rizz': 'charisma / charm',
+    'npc': 'someone acting mindlessly', 'delulu': 'delusional', 'cheugy': 'outdated / uncool',
+    'mid': 'mediocre', 'ratio': 'getting more dislikes than likes',
+    'caught in 4k': 'caught doing something bad', 'ghosting': 'ignoring someone',
+    'situationship': 'undefined romantic relationship', 'body count': 'number of sexual partners',
+    'sneaky link': 'secret romantic partner', 'soft launch': 'subtly revealing a relationship',
+    'hard launch': 'publicly announcing a relationship', 'pick me': 'seeking validation',
+    'simp': 'overly devoted person', 'stan': 'obsessive fan',
+    'ship': 'support a romantic pairing', 'otp': 'one true pairing',
+    'finesse': 'manipulate skillfully', 'flex': 'show off', 'drip': 'stylish outfit',
+    'snatched': 'looking attractive', 'fire': 'excellent', 'lit': 'exciting',
+    'goat': 'greatest of all time', 'g': 'friend / gangster', 'fam': 'family / close friend',
+    'bro': 'friend', 'bruh': 'expression of disbelief', 'fr': 'for real',
+    'lowkey sus': 'secretly suspicious', 'w': 'win', 'l': 'loss',
+    'ratio\'d': 'overwhelmed by negative replies', 'touch grass': 'go outside',
+    'based': 'admirable / confident', 'cringe': 'embarrassing',
+    'himbo': 'attractive but not intelligent', 'fomo': 'fear of missing out',
+    'jomo': 'joy of missing out', 'irl meet': 'meet in person',
+    'secret': 'keep this between us', 'dont tell': 'don\'t tell anyone',
+    'our secret': 'keep this between us', 'special friend': 'close secret friend',
     'older friend': 'adult friend'
   };
 
@@ -150,15 +95,10 @@
     return expanded;
   }
 
-  // ─── Chat message extraction (INBOUND ONLY) ───────────────────────────────
-
   function extractWhatsAppMessages() {
     const msgs = [];
-    // ✅ .message-in only — .message-out is the child's own messages
     document.querySelectorAll('.message-in').forEach(el => {
-      const textEl = el.querySelector(
-        '[data-testid="msg-text"], .copyable-text span, span.selectable-text'
-      );
+      const textEl = el.querySelector('[data-testid="msg-text"], .copyable-text span, span.selectable-text');
       const text = (textEl?.innerText || el.innerText)?.trim();
       if (text && text.length > 2) msgs.push(text);
     });
@@ -167,19 +107,11 @@
 
   function extractDiscordMessages() {
     const msgs = [];
-    // ✅ Skip messages authored by the current user
-    // Discord marks the current user's messages with [class*="repliedMessage"] absence
-    // Most reliable: check if the message row has data-author matching the current user's username
     let currentUsername = null;
     try {
-      // Try to get current user's name from the account area at bottom-left
-      currentUsername = document.querySelector(
-        '[class*="nameTag"] [class*="username"], [class*="userTag"] span'
-      )?.innerText?.trim()?.toLowerCase();
+      currentUsername = document.querySelector('[class*="nameTag"] [class*="username"], [class*="userTag"] span')?.innerText?.trim()?.toLowerCase();
     } catch (_) {}
-
     document.querySelectorAll('li[id^="chat-messages-"]').forEach(el => {
-      // Skip if authored by current user
       if (currentUsername) {
         const authorEl = el.querySelector('[class*="username"], [class*="headerText"] span');
         const author = authorEl?.innerText?.trim()?.toLowerCase();
@@ -194,7 +126,6 @@
 
   function extractTelegramMessages() {
     const msgs = [];
-    // ✅ .message.in = received, .message.out = sent by user
     document.querySelectorAll('.message.in .text, .message.in .caption').forEach(el => {
       const text = el.innerText?.trim();
       if (text && text.length > 2) msgs.push(text);
@@ -204,15 +135,9 @@
 
   function extractMessengerMessages() {
     const msgs = [];
-    // ✅ Facebook/Messenger: sent messages sit on the right (justify-content: flex-end)
-    // Received messages are in rows without that alignment
     document.querySelectorAll('[role="row"]').forEach(row => {
-      // Skip rows that contain the user's own outgoing message
-      const isOutgoing =
-        row.querySelector('[style*="flex-end"]') !== null ||
-        row.querySelector('[data-scope="sent_message"]') !== null;
+      const isOutgoing = row.querySelector('[style*="flex-end"]') !== null || row.querySelector('[data-scope="sent_message"]') !== null;
       if (isOutgoing) return;
-
       const textEl = row.querySelector('[dir="auto"]');
       const text = textEl?.innerText?.trim();
       if (text && text.length > 2 && text.length < 1000) msgs.push(text);
@@ -222,8 +147,6 @@
 
   function extractInstagramMessages() {
     const msgs = [];
-    // ✅ Instagram DMs: outgoing messages have justify-content: flex-end on their wrapper
-    // We walk direct-thread items and skip ones aligned to the right
     document.querySelectorAll('[class*="DirectThread"] > div, [role="listitem"]').forEach(item => {
       const style = window.getComputedStyle(item);
       if (style.justifyContent === 'flex-end' || style.alignSelf === 'flex-end') return;
@@ -235,9 +158,7 @@
 
   function extractGenericMessages() {
     const msgs = [];
-    document.querySelectorAll(
-      '[class*="message"], [class*="chat"], [class*="bubble"], [data-message]'
-    ).forEach(el => {
+    document.querySelectorAll('[class*="message"], [class*="chat"], [class*="bubble"], [data-message]').forEach(el => {
       if (el.children.length < 5) {
         const text = el.innerText?.trim();
         if (text && text.length > 2 && text.length < 2000) msgs.push(text);
@@ -258,9 +179,7 @@
     }
   }
 
-  // ─── Analysis request ─────────────────────────────────────────────────────
-
-  const CHAT_DEDUP_MS = 8000;
+const CHAT_DEDUP_MS = 30000;
   let lastChatText   = '';
   let lastChatSentAt = 0;
 
@@ -289,7 +208,6 @@
   function requestAnalysis() {
     const text = document.body?.innerText?.trim() || '';
     if (!text || text.length < 50) return;
-
     safeSendMessage({
       type:     'ANALYZE_PAGE',
       url:      location.href,
@@ -299,14 +217,11 @@
     });
   }
 
-  // ─── Chat platform: MutationObserver (smarter debounce) ──────────────────
-
   let chatDebounceTimer  = null;
   let lastObserverFire   = 0;
 
   function setupChatObserver() {
     const platform = getPlatform();
-
     const containerSelectors = {
       whatsapp:  '#main, [data-testid="conversation-panel-body"]',
       discord:   '[class*="scroller"], [class*="messagesWrapper"], ol[class*="scrollerInner"]',
@@ -324,28 +239,25 @@
     const observer = new MutationObserver(() => {
       const now = Date.now();
 
-      if (now - lastObserverFire > 6000) {
-        // ✅ First message after a quiet period — fire immediately
+      // ✅ Quiet period = 3s (was 6s), debounce = 800ms (was 2500ms)
+      if (now - lastObserverFire > 3000) {
         lastObserverFire = now;
         clearTimeout(chatDebounceTimer);
         requestChatAnalysis();
       } else {
-        // ✅ Rapid burst — debounce so we catch the full message cluster
         clearTimeout(chatDebounceTimer);
         chatDebounceTimer = setTimeout(() => {
           lastObserverFire = Date.now();
           requestChatAnalysis();
-        }, 2500);
+        }, 800);
       }
     });
 
     observer.observe(container, { childList: true, subtree: true });
 
-    // Initial scan after load
-    setTimeout(requestChatAnalysis, 2000);
+    // ✅ Initial scan at 800ms (was 2000ms)
+    setTimeout(requestChatAnalysis, 800);
   }
-
-  // ─── Non-chat: static + dynamic page observers ───────────────────────────
 
   function setupStaticObserver() {
     setTimeout(requestAnalysis, 1500);
@@ -353,7 +265,6 @@
 
   function attachDynamicWatchers() {
     if (isChatPlatform()) return;
-
     const targets = ['#comments', '.comments', '[data-testid="tweet"]', 'article', 'main'];
     targets.forEach(sel => {
       const el = document.querySelector(sel);
@@ -363,22 +274,17 @@
     });
   }
 
-  // ─── SPA navigation watcher ───────────────────────────────────────────────
-
   let lastHref = location.href;
 
   function setupSPAWatcher() {
     const navObserver = new MutationObserver(() => {
       if (location.href !== lastHref) {
-        lastHref       = location.href;
-        lastChatText   = '';
-        lastChatSentAt = 0;
-        lastObserverFire = 0;
+        lastHref = location.href;
+        lastChatText = ''; lastChatSentAt = 0; lastObserverFire = 0;
         console.log('[GuardianLens] SPA navigation →', lastHref);
         setTimeout(isChatPlatform() ? requestChatAnalysis : requestAnalysis, 1500);
       }
     });
-
     const titleEl = document.querySelector('title');
     if (titleEl) navObserver.observe(titleEl, { childList: true });
 
@@ -387,10 +293,8 @@
       history[method] = function (...args) {
         orig(...args);
         if (location.href !== lastHref) {
-          lastHref         = location.href;
-          lastChatText     = '';
-          lastChatSentAt   = 0;
-          lastObserverFire = 0;
+          lastHref = location.href;
+          lastChatText = ''; lastChatSentAt = 0; lastObserverFire = 0;
           setTimeout(isChatPlatform() ? requestChatAnalysis : requestAnalysis, 1500);
         }
       };
@@ -398,16 +302,12 @@
 
     window.addEventListener('popstate', () => {
       if (location.href !== lastHref) {
-        lastHref         = location.href;
-        lastChatText     = '';
-        lastChatSentAt   = 0;
-        lastObserverFire = 0;
+        lastHref = location.href;
+        lastChatText = ''; lastChatSentAt = 0; lastObserverFire = 0;
         setTimeout(isChatPlatform() ? requestChatAnalysis : requestAnalysis, 1500);
       }
     });
   }
-
-  // ─── Message listener (from background) ──────────────────────────────────
 
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === 'PING') {
@@ -419,9 +319,7 @@
     }
   });
 
-  // ─── Boot ─────────────────────────────────────────────────────────────────
-
-  console.log(`[GuardianLens] v0.9.3 loaded on ${getPlatform()} (chat: ${isChatPlatform()})`);
+  console.log(`[GuardianLens] v0.9.4 loaded on ${getPlatform()} (chat: ${isChatPlatform()})`);
 
   if (isChatPlatform()) {
     if (document.readyState === 'loading') {
