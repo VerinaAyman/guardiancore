@@ -276,6 +276,7 @@ async def resolve_and_classify(domain: str, child_id: int) -> tuple[bool, str]:
 
 async def log_dns_event(domain: str, child_id: int, event_type: str, category: str = ""):
     try:
+        print(f"[dns] log_dns_event called: {event_type} {domain} child={child_id}")
         async with async_session() as session:
             now = _utcnow()
             domain_hash = hashlib.sha256(
@@ -301,9 +302,11 @@ async def log_dns_event(domain: str, child_id: int, event_type: str, category: s
                 }
             )
             await session.commit()
+            print(f"[dns] log_dns_event success: {event_type} {domain} child={child_id}")
     except Exception as e:
-        print(f"[dns] log_dns_event error: {e}")
-
+        print(f"[dns] log_dns_event ERROR: {e}")
+        import traceback
+        traceback.print_exc()
 
 async def resolve_upstream(query_data: bytes) -> bytes:
     async with httpx.AsyncClient() as client:
