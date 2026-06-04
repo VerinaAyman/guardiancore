@@ -91,8 +91,7 @@ async def analyze_content(
 
         # Layer 1: URL keyword check + Groq classification
         text_content = request.text_content[:2000] if request.text_content else ""
-        result = await classifier.predict(request.url, text_content)
-
+        result = await classifier.classify(request.url, text_content, child_age=13)
         logger.info(f"[Analysis] Classifier result: safe={result['safe']} | blocked_by={result.get('blocked_by')} | action={result.get('action')} | category={result.get('category')}")
 
         # If Groq ran, use its decision directly
@@ -236,7 +235,7 @@ async def analyze_chat(
 
         action = groq_result.get('action', 'none')
         confidence = groq_result.get('confidence', 0.0)
-        if action in ('block', 'warn') and confidence < 0.85:
+        if action in ('block', 'warn') and confidence < 0.35:
             action = 'none'
         return ChatAnalysisResponse(
             safe=(action == 'none'),
