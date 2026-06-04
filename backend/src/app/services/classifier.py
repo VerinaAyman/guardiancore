@@ -38,13 +38,22 @@ GROOMING_RISK_PATTERNS = [
     r"\b(keep it (secret|between us|private))\b",
 ]
 
-HIGH_RISK_SITES = {
-    "omegle.com", "chatroulette.com", "omegle.tv",
+BLOCKED_DOMAINS = {
+    # Adult content
+    "pornhub.com", "xvideos.com", "xnxx.com", "redtube.com", "youporn.com",
+    "tube8.com", "spankbang.com", "xhamster.com", "brazzers.com", "onlyfans.com",
+    "chaturbate.com", "livejasmin.com", "myfreecams.com",
+    # Random chat (high grooming risk)
+    "omegle.com", "chatroulette.com", "omegle.tv", "emeraldchat.com",
 }
 
-MEDIUM_RISK_SITES = {
+WARN_DOMAINS = {
     "discord.com", "telegram.org", "kik.com",
 }
+
+# Keep old names so fast_path_check still works
+HIGH_RISK_SITES = BLOCKED_DOMAINS
+MEDIUM_RISK_SITES = WARN_DOMAINS
 
 
 def expand_slang(text: str) -> str:
@@ -90,10 +99,39 @@ class ContentClassifier:
         if not self.groq_api_key:
             return self._safe_result()
 
-        fast = fast_path_check(url, text_content)
+        # Layer 0: hard-blocked domains — no Groq needed
+        domain = urlparse(url).netloc.lower().replace("www.", "")
+        if domain in BLOCKED_DOMAINS:
+            logger.info(f"[Classifier] Domain blocked: {domain}")
+            return {
+                **self._safe_result(),
+                "safe": False,
+                "action": "block",
+                "category": "adult_content",
+                "confidence": 1.0,
+                "blocked_by": "url_keywords",
+                "matched_keyword": domain,
+                "reason": f"Blocked domain: {domain}",
+            }
 
+        if domain in WARN_DOMAINS:
+            logger.info(f"[Classifier] Domain warned: {domain}")
+            return {
+                **self._safe_result(),
+                "safe": False,
+                "action": "warn",
+                "category": "high_risk_platform",
+                "confidence": 0.9,
+                "blocked_by": "url_keywords",
+                "matched_keyword": domain,
+                "reason": f"High-risk platform: {domain}",
+            }
+
+        # Layer 1: Groq for everything else
         try:
-            return await self._classify_with_groq(url, text_content, child_age, is_chat)
+            result = await self._classify_with_groq(url, text_content, child_age, is_chat)
+            result["blocked_by"] = "groq_classification"
+            return result
         except Exception as e:
             logger.error(f"[Classifier] Groq call failed: {e}")
             return self._safe_result()
@@ -186,8 +224,8 @@ Child age: {child_age}"""
 
         # Normalize category
         category = groq_result.get("category", "safe").lower()
-        # Safety override — if grooming detected at high confidence, force block
-        raw_score = groq_result.get("risk_score", 0)
+
+        # Safety override — if grooming detected at high confidence, force warn
         if category == "grooming" and confidence >= 0.6:
             action = "warn"
             logger.warning(f"[Classifier] Override: grooming at score {raw_score} forced to warn")
