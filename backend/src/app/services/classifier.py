@@ -188,9 +188,9 @@ Child age: {child_age}"""
         category = groq_result.get("category", "safe").lower()
         # Safety override — if grooming detected at high confidence, force block
         raw_score = groq_result.get("risk_score", 0)
-        if category == "grooming" and raw_score >= 7 and action == "none":
-            action = "block"
-            logger.warning(f"[Classifier] Override: grooming at score {raw_score} forced to block")
+        if category == "grooming" and confidence >= 0.6:
+            action = "warn"
+            logger.warning(f"[Classifier] Override: grooming at score {raw_score} forced to warn")
 
         return {
             "safe": action == "none",
